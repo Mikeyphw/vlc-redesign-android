@@ -36,10 +36,8 @@ jobs:
           test -s application/vlc-android/src/org/videolan/vlc/gui/MainActivity.kt
           test -s buildsystem/redesign/MEDIALIBRARY.md
           test -f application/app/build.gradle
-          if grep -R --include='*.yml' --include='*.yaml' -n 'pull_request_target:' .github/workflows; then
-            echo '::error::Untrusted PR privilege escalation event not permitted'
-            exit 1
-          fi
+          # Standalone source-owned validator avoids the self-matching grep trap.
+          python3 -B ci/workflow_policy.py
 
   android-debug:
     name: Android hosted debug build (blocked until patched Maven source configured)
@@ -52,20 +50,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.4.0'
-      - name: Install required Android SDK packages (hosted only)
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;21.4.7075529'
-          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
       - name: Enforce patched MediaLibrary dependency
         shell: bash
         run: |
@@ -78,6 +62,20 @@ jobs:
             echo '::error::VLC_RD_MAVEN_BASE_URL must be an HTTPS Maven repository URL.'
             exit 1
           fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Install required Android SDK packages (hosted only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;21.4.7075529'
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
       - name: Compile Android debug app with upstream dependency identity
         shell: bash
         run: gradle --no-daemon --stacktrace :application:app:testDebugUnitTest :application:app:assembleDebug
