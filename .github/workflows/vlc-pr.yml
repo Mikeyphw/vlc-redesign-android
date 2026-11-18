@@ -1,0 +1,91 @@
+name: VLC Android PR qualification
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vlc-android-pr-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-contracts:
+    name: Native source contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Positive and adversarial upstream-merge tests
+        run: python3 -B -m unittest discover -s ci/tests -p 'test_*.py' -v
+      - name: Source provenance and license controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s COPYING
+          test -s UPSTREAM.md
+          test -s docs/ARCHITECTURE.md
+          test -s application/vlc-android/src/org/videolan/vlc/gui/MainActivity.kt
+          test -s buildsystem/redesign/MEDIALIBRARY.md
+          test -f application/app/build.gradle
+          if grep -R --include='*.yml' --include='*.yaml' -n 'pull_request_target:' .github/workflows; then
+            echo '::error::Untrusted PR privilege escalation event not permitted'
+            exit 1
+          fi
+
+  android-debug:
+    name: Android hosted debug build (blocked until patched Maven source configured)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: source-contracts
+    env:
+      RD_MAVEN: ${{ vars.VLC_RD_MAVEN_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+      - name: Install required Android SDK packages (hosted only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;21.4.7075529'
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+      - name: Enforce patched MediaLibrary dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${RD_MAVEN:-}" ]]; then
+            echo '::error::VLC_RD_MAVEN_BASE_URL is absent. Upstream requires patched org.videolan.android:medialibrary-all:0.13.24-rd1. No fallback or skipped build is allowed.'
+            exit 1
+          fi
+          if [[ ! "$RD_MAVEN" =~ ^https:// ]]; then
+            echo '::error::VLC_RD_MAVEN_BASE_URL must be an HTTPS Maven repository URL.'
+            exit 1
+          fi
+      - name: Compile Android debug app with upstream dependency identity
+        shell: bash
+        run: gradle --no-daemon --stacktrace :application:app:testDebugUnitTest :application:app:assembleDebug
+      - name: Upload unsigned debug APKs for inspection
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlc-android-debug-${{ github.sha }}
+          path: application/app/build/outputs/apk/debug/**/*.apk
+          if-no-files-found: error
+          retention-days: 7
