@@ -80,3 +80,17 @@ APK. New Devtool delivery must bind the actual target origin, named feature
 branch, starting HEAD/tree/blobs, current approved launcher runtime and exact
 payload. The prior committed native session is historical; resume the newly
 created session after commit rather than reapply.
+
+## Bounded official Maven classpath retry correction
+
+At PR HEAD `41d64e93a659d28d12f42bb84b8ef134820c5d34`, GitHub Actions
+run `44532070848` attempt 1 failed to locate JetBrains annotations 13.0;
+attempt 2 failed to locate Kotlin stdlib 2.2.10. A requested controlled
+rerun was carried out by the operator using `gh` after the connected GitHub
+integration returned 403. The source/ABI/Maven jobs passed both attempts.
+This follow-up only adds a bounded remote classpath retry for the existing
+Gradle test/build steps, with `--refresh-dependencies` and fail-closed guards,
+new negative cases and current CI documentation. No Kotlin/AGP/Gradle
+versions, project source, ABI caches or release policy are changed.
+Local validation is not hosted qualification; a native committed apply must
+be followed by fresh required-CI checks at the resulting PR HEAD.

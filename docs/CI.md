@@ -188,3 +188,24 @@ Source and workflow contract tests include negative cases for wrong remote or
 commit, symlinked/fake directories, dirty tracked source, omitted preparation,
 removed verification, and broken source-lock agreement. Hosted Gradle/API
 acceptance and the first verified debug APK **are still pending**.
+
+## Maven Central classpath transient-failure qualification (19 November 2026)
+
+Run [44532070848](https://github.com/Mikeyphw/vlc-redesign-android/actions/runs/44532070848)
+failed twice at the same PR HEAD during Gradle **settings classpath** resolution:
+first for `org.jetbrains:annotations:13.0` JAR, then for
+`org.jetbrains.kotlin:kotlin-stdlib:2.2.10` POM. Both are published
+coordinates; neither failure had started JVM tests. Native four-ABI ELF
+receipts, source-locked LibVLCJNI and the patched Maven AAR passed.
+
+`ci/gradle_dependency_retry.sh` preserves Gradle 9.6, the same source
+repositories and versions, and all JVM/APK gates. On a first failure it
+retries **only** when Gradle reported a missing official Maven Central
+settings-classpath artifact, with the exact dependency-repository diagnostics
+and no task execution. The second and third attempts use
+`--refresh-dependencies`; after three failures the job remains failed.
+Test failures, compile failures, source/checksum mismatches, absent Gradle,
+and any failure after a task starts are not retried. All real Gradle output
+is displayed, the bounded retry reason is recorded, and negative tests
+reject missing classification and bypasses. This is a resilience measure,
+**not evidence** that Maven Central availability or the APK is qualified.

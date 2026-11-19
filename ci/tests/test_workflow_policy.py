@@ -28,6 +28,7 @@ class CIContracts(unittest.TestCase):
         self.f.write('ci/verify_android_sdk.py', (ROOT/'ci/verify_android_sdk.py').read_bytes())
         self.f.write('ci/apk_reuse.py', (ROOT/'ci/apk_reuse.py').read_bytes())
         self.f.write('ci/prepare_android_gradle.py', (ROOT/'ci/prepare_android_gradle.py').read_bytes())
+        self.f.write('ci/gradle_dependency_retry.sh', (ROOT/'ci/gradle_dependency_retry.sh').read_bytes())
         self.guard = mock.patch.object(wp, 'ROOT', self.f.root)
         self.lock_pins = mock.patch.object(ml,'TRUSTED_PATCH_BLOBS',self.f.lock['patches'])
         self.lock_pins.start()
@@ -71,6 +72,29 @@ class CIContracts(unittest.TestCase):
                 wp.check_repository(self.f.root)
         path.unlink()
         with self.assertRaises(wp.ContractFailure):wp.check_repository(self.f.root)
+
+    def test_no_bypassed_gradle_retry_or_jvm_qualification(self):
+        src=self.files()['vlc-pr.yml']
+        self.assertEqual(src.count('bash ci/gradle_dependency_retry.sh test'),1)
+        self.assertEqual(src.count('bash ci/gradle_dependency_retry.sh assemble'),1)
+        for token in ('bash ci/gradle_dependency_retry.sh test',
+                      'bash ci/gradle_dependency_retry.sh assemble'):
+            files=self.files()
+            files['vlc-pr.yml']=src.replace(token, 'echo skip-gradle',1)
+            with self.subTest(token=token),self.assertRaises(wp.ContractFailure):
+                wp.require_workflow_contract(files)
+
+    def test_missing_dependency_classifier_or_unbounded_retry_refused(self):
+        p=self.f.root/'ci/gradle_dependency_retry.sh'
+        original=p.read_text('utf-8')
+        for token in ('for attempt in 1 2 3', 'flags+=(--refresh-dependencies)',
+                      'Searched in the following locations:',
+                      'VLC_GRADLE_NON_CLASSPATH_FAILURE',
+                      'grep -Eq \'^> Task \''):
+            p.write_text(original.replace(token,'REMOVED_GUARD',1))
+            with self.subTest(token=token),self.assertRaises(wp.ContractFailure):
+                wp.check_repository(self.f.root)
+        p.write_text(original)
 
     def test_guard_never_matches_itself(self):
         source = self.files()['vlc-pr.yml']
@@ -144,8 +168,11 @@ class CIContracts(unittest.TestCase):
         with self.assertRaises(wp.ContractFailure):wp.require_workflow_contract(files)
 
     def test_required_android_apk_build_cannot_be_substituted(self):
-        files=self.files();files['vlc-pr.yml']=files['vlc-pr.yml'].replace(':application:app:assembleDebug',':application:app:help')
-        with self.assertRaises(wp.ContractFailure):wp.require_workflow_contract(files)
+        retry=self.f.root/'ci/gradle_dependency_retry.sh'
+        original=retry.read_text('utf-8')
+        retry.write_text(original.replace(':application:app:assembleDebug', ':application:app:help'))
+        with self.assertRaises(wp.ContractFailure):wp.check_repository(self.f.root)
+        retry.write_text(original)
 
     def test_docker_image_digest_check_required(self):
         files=self.files();files['vlc-pr.yml']=files['vlc-pr.yml'].replace('docker pull "$VLC_IMAGE"','echo no-container-pull')

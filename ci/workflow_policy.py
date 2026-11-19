@@ -76,7 +76,7 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
                  'actions/upload-artifact@v4', 'actions/download-artifact@v4',
                  'if-no-files-found: error', "gradle-version: '9.6.0'",
                  'RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository',
-                 ':application:app:testDebugUnitTest', ':application:app:assembleDebug',
+                 'bash ci/gradle_dependency_retry.sh test', 'bash ci/gradle_dependency_retry.sh assemble',
                  'docker pull "$VLC_IMAGE"', 'sha256:'):
         must_have(source, code, 'source-built patched Maven workflow')
     # setup-android@v3 defaults to `tools platform-tools`. Google removed
@@ -196,7 +196,7 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
         raise ContractFailure('native build lacks adequate bounded hosted timeout')
     if (source.count('python3 -B ci/medialibrary.py verify-maven') < 2 or
             source.index('python3 -B ci/medialibrary.py verify-maven', source.index('  android-debug:')) >
-            source.index('gradle --no-daemon', source.index('  android-debug:'))):
+            source.index('bash ci/gradle_dependency_retry.sh test', source.index('  android-debug:'))):
         raise ContractFailure('Gradle is not gated on a verified local Maven AAR')
     # APK reuse can skip only assembly for identical source/toolchain/Maven
     # content. Unit tests and independent artifact verification remain required.
@@ -240,8 +240,30 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
     jvm_block = android.split('Run JVM unit tests against current source (never cached)', 1)[1].split('Assemble Android debug APK only if inputs changed', 1)[0]
     build_block = android.split('Assemble Android debug APK only if inputs changed', 1)[1].split('Qualify unchanged or newly built APK and checksums', 1)[0]
     for block in (jvm_block, build_block):
-        if 'python3 -B ci/prepare_android_gradle.py verify' not in block or block.index('ci/prepare_android_gradle.py verify') > block.index('gradle --no-daemon'):
+        if 'python3 -B ci/prepare_android_gradle.py verify' not in block or block.index('ci/prepare_android_gradle.py verify') > block.index('bash ci/gradle_dependency_retry.sh'):
             raise ContractFailure('Gradle invoked without source-locked LibVLCJNI project verification')
+    # The Maven Central dependency resolver can yield transient, negative
+    # classpath lookups. Retry only this diagnosed failure, never JVM tests or
+    # compilation. Every attempt uses real Gradle CLI and native diagnostics.
+    if (android.count('bash ci/gradle_dependency_retry.sh test') != 1
+            or android.count('bash ci/gradle_dependency_retry.sh assemble') != 1):
+        raise ContractFailure('bounded Gradle dependency resolver missing or duplicated')
+    retry = ROOT / 'ci/gradle_dependency_retry.sh'
+    if not retry.is_file() or retry.is_symlink():
+        raise ContractFailure('source-owned Gradle retry script missing or symlinked')
+    retry_text = retry.read_text('utf-8')
+    for required in ('for attempt in 1 2 3', 'flags+=(--refresh-dependencies)',
+                     "Could not resolve all artifacts for configuration 'classpath'.",
+                     'Searched in the following locations:',
+                     'https://repo.maven.apache.org/maven2/',
+                     "grep -Eq '^> Task '",
+                     'VLC_GRADLE_NON_CLASSPATH_FAILURE',
+                     'VLC_GRADLE_REMOTE_CLASSPATH_UNAVAILABLE',
+                     "test) task=':application:app:testDebugUnitTest'",
+                     "assemble) task=':application:app:assembleDebug'",
+                     'gradle "${flags[@]}" "$task" 2>&1 | tee "$log"'):
+        if required not in retry_text:
+            raise ContractFailure('Gradle fail-closed network retry guard missing: '+required)
     prep = ROOT / 'ci/prepare_android_gradle.py'
     if not prep.is_file() or prep.is_symlink():
         raise ContractFailure('source-bound LibVLCJNI checkout verifier missing or symlinked')

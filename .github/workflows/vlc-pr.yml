@@ -339,7 +339,7 @@ jobs:
           set -euo pipefail
           python3 -B ci/medialibrary.py verify-maven
           python3 -B ci/prepare_android_gradle.py verify
-          gradle --no-daemon --stacktrace :application:app:testDebugUnitTest
+          bash ci/gradle_dependency_retry.sh test
       - name: Assemble Android debug APK only if inputs changed
         if: steps.apk-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -348,7 +348,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B ci/prepare_android_gradle.py verify
-          gradle --no-daemon --stacktrace :application:app:assembleDebug
+          bash ci/gradle_dependency_retry.sh assemble
       - name: Qualify unchanged or newly built APK and checksums
         shell: bash
         run: |
