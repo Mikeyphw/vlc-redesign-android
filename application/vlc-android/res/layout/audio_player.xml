@@ -543,6 +543,7 @@
 
         <TextView
                 android:id="@+id/audio_rewind_text"
+                android:importantForAccessibility="no"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="?attr/player_icon_color"
@@ -597,6 +598,7 @@
 
         <TextView
                 android:id="@+id/audio_forward_text"
+                android:importantForAccessibility="no"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="?attr/player_icon_color"
