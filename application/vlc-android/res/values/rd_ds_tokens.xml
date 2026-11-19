@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- VLC Redesign M2: semantic tokens; names intentionally separate from generated rd_* palette. -->
+<resources>
+    <dimen name="rd_ds_space_xs">4dp</dimen>
+    <dimen name="rd_ds_space_sm">8dp</dimen>
+    <dimen name="rd_ds_space_md">12dp</dimen>
+    <dimen name="rd_ds_space_lg">16dp</dimen>
+    <dimen name="rd_ds_space_xl">24dp</dimen>
+    <dimen name="rd_ds_space_2xl">32dp</dimen>
+    <dimen name="rd_ds_radius_small">6dp</dimen>
+    <dimen name="rd_ds_radius_medium">10dp</dimen>
+    <dimen name="rd_ds_radius_card">12dp</dimen>
+    <dimen name="rd_ds_radius_large">14dp</dimen>
+    <dimen name="rd_ds_touch_target">48dp</dimen>
+    <dimen name="rd_ds_elevation_base">0dp</dimen>
+    <dimen name="rd_ds_elevation_floating">4dp</dimen>
+    <dimen name="rd_ds_elevation_menu">8dp</dimen>
+    <color name="rd_ds_surface">@color/rd_light_bg_b1</color>
+    <color name="rd_ds_panel">@color/rd_light_bg_a4</color>
+    <color name="rd_ds_text">@color/rd_light_fg_1</color>
+    <color name="rd_ds_text_muted">@color/rd_light_fg_a1</color>
+</resources>

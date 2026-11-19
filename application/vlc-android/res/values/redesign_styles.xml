@@ -100,19 +100,19 @@
     <!-- Shapes -->
     <style name="ShapeAppearance.Redesign.Small" parent="ShapeAppearance.MaterialComponents.SmallComponent">
         <item name="cornerFamily">rounded</item>
-        <item name="cornerSize">6dp</item>
+        <item name="cornerSize">@dimen/rd_ds_radius_small</item>
     </style>
     <style name="ShapeAppearance.Redesign.Medium" parent="ShapeAppearance.MaterialComponents.MediumComponent">
         <item name="cornerFamily">rounded</item>
-        <item name="cornerSize">10dp</item>
+        <item name="cornerSize">@dimen/rd_ds_radius_medium</item>
     </style>
     <style name="ShapeAppearance.Redesign.Large" parent="ShapeAppearance.MaterialComponents.LargeComponent">
         <item name="cornerFamily">rounded</item>
-        <item name="cornerSize">14dp</item>
+        <item name="cornerSize">@dimen/rd_ds_radius_large</item>
     </style>
     <style name="ShapeAppearance.Redesign.Card" parent="ShapeAppearance.MaterialComponents.MediumComponent">
         <item name="cornerFamily">rounded</item>
-        <item name="cornerSize">12dp</item>
+        <item name="cornerSize">@dimen/rd_ds_radius_card</item>
     </style>
 
     <!-- Buttons (RedesignButton.qml, Figma "Cancel" / "Save"): radius 6, Inter SemiBold 14, sentence case; the
@@ -120,7 +120,7 @@
          36 high (the desktop's 32 and a little more for a finger). -->
     <style name="Widget.Redesign.Button" parent="Widget.MaterialComponents.Button.UnelevatedButton">
         <item name="android:textAppearance">@style/TextAppearance.Redesign.Button</item>
-        <item name="android:minHeight">36dp</item>
+        <item name="android:minHeight">@dimen/rd_ds_touch_target</item>
         <item name="android:minWidth">100dp</item>
         <item name="android:insetTop">0dp</item>
         <item name="android:insetBottom">0dp</item>
@@ -132,7 +132,7 @@
     </style>
     <style name="Widget.Redesign.Button.Outlined" parent="Widget.MaterialComponents.Button.OutlinedButton">
         <item name="android:textAppearance">@style/TextAppearance.Redesign.Button</item>
-        <item name="android:minHeight">36dp</item>
+        <item name="android:minHeight">@dimen/rd_ds_touch_target</item>
         <item name="android:insetTop">0dp</item>
         <item name="android:insetBottom">0dp</item>
         <item name="cornerRadius">6dp</item>

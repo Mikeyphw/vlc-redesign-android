@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rd_amoled_title">AMOLED true black</string>
+    <string name="rd_amoled_summary">Use black backgrounds in dark mode on phones and tablets. Light and system accents stay unchanged.</string>
+</resources>

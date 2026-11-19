@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mode-specific semantic roles; do not redefine upstream-generated palette names. -->
+<resources>
+    <color name="rd_ds_surface">@color/rd_dark_bg_b1</color>
+    <color name="rd_ds_panel">@color/rd_dark_bg_a4</color>
+    <color name="rd_ds_text">@color/rd_dark_fg_1</color>
+    <color name="rd_ds_text_muted">@color/rd_dark_fg_a1</color>
+</resources>

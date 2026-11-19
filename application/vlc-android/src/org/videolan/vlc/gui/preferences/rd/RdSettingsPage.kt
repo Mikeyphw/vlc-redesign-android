@@ -195,6 +195,8 @@ class RdSettingsPage : BasePreferenceFragment(), SharedPreferences.OnSharedPrefe
         // the TV layout is always dark (applyTheme): its Theme row showed Dark whatever was pressed, a choice that
         // did nothing. Not shown there; a phone or a tablet keeps it.
         if (Settings.showTvUi) pref<Preference>(KEY_APP_THEME)?.isVisible = false
+        // AMOLED is an opt-in phone/tablet palette, not a TV or player override.
+        if (Settings.showTvUi) pref<Preference>(org.videolan.vlc.gui.helpers.KEY_RD_AMOLED)?.isVisible = false
         // the TV layout's size: "Automatic (150 %)" with the size found for this screen, then the sizes
         pref<ListPreference>(org.videolan.tools.KEY_RD_INTERFACE_SCALE)?.let { lp ->
             lp.isVisible = Settings.showTvUi
@@ -655,7 +657,7 @@ class RdSettingsPage : BasePreferenceFragment(), SharedPreferences.OnSharedPrefe
                 activity.recreate()
             }
             org.videolan.tools.KEY_RD_LAYOUT_DIRECTION, org.videolan.vlc.gui.helpers.KEY_RD_ACCENT_SYSTEM,
-            org.videolan.tools.KEY_RD_INCREASE_CONTRAST -> {
+            org.videolan.vlc.gui.helpers.KEY_RD_AMOLED, org.videolan.tools.KEY_RD_INCREASE_CONTRAST -> {
                 activity.setRestart()
                 activity.recreate()
             }

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rd_amoled_title">Preto verdadeiro (AMOLED)</string>
+    <string name="rd_amoled_summary">Usar fundos pretos no modo escuro em celulares e tablets. O modo claro e as cores de destaque permanecem inalterados.</string>
+</resources>
