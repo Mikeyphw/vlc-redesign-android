@@ -47,3 +47,21 @@ retired `tools` SDK package. This new follow-up retains the existing
 while setting an explicit current package list in both Android setup actions.
 The historical failed session is not upgraded. Rebuild a fresh native
 source-bound artifact on the exact current PR head and qualify its new CI run.
+
+## Incremental APK/native artifact reuse milestone
+
+This consolidated follow-up is source-bound to PR #1 HEAD
+`2c3aa8e1477f5865579804dbe75ee018025d0129`, tree
+`cabddbf5c2250e582f7f2a0a87f5292ef6adfefa`. It adds
+`ci/apk_reuse.py` and `ci/tests/test_apk_reuse.py`, updates the existing native
+workflow/policy/MediaLibrary package/tests, and refreshes the CI documentation.
+Earlier overlapping native CI contract tests are updated for current behavior;
+no security, origin, regression, negative or required-CI gate is deleted.
+
+The historical PR run `44518789481` qualified four native ABIs but failed
+on the official baseline HTTP 404, so it did not build an APK or qualify
+required CI. Native caches may be reused *only* after new source-bound ABI
+verification; JVM tests cannot be skipped by an APK cache. The new Devtool
+launcher requires source/origin/HEAD/tree/preimage/blob/payload verification,
+native executable tests and the actual current hosted CI. A failed hosted job
+is not a pass; resume the new durable session instead of reapplying.

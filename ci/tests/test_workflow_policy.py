@@ -26,6 +26,7 @@ class CIContracts(unittest.TestCase):
             self.f.write('.github/workflows/'+file,contents)
         self.f.write('config/delivery-required-ci.json', (ROOT/'config/delivery-required-ci.json').read_bytes())
         self.f.write('ci/verify_android_sdk.py', (ROOT/'ci/verify_android_sdk.py').read_bytes())
+        self.f.write('ci/apk_reuse.py', (ROOT/'ci/apk_reuse.py').read_bytes())
         self.guard = mock.patch.object(wp, 'ROOT', self.f.root)
         self.lock_pins = mock.patch.object(ml,'TRUSTED_PATCH_BLOBS',self.f.lock['patches'])
         self.lock_pins.start()
@@ -275,6 +276,27 @@ class CIContracts(unittest.TestCase):
             with self.subTest(token=token),self.assertRaises(wp.ContractFailure):
                 wp.check_repository(self.f.root)
         script.write_text(original)
+
+    def test_native_old_cache_reuse_is_sha_qualified(self):
+        src=self.files()['vlc-pr.yml']
+        self.assertIn('Qualify restored ABI before deciding whether to compile',src)
+        for old,new in (('restore-keys: |','restore-keys: # removed'),
+                        ('id: abi-reuse','id: missing-reuse'),
+                        ("if: steps.abi-reuse.outputs.reuse != 'true'",'if: false')):
+            files=self.files();files['vlc-pr.yml']=src.replace(old,new)
+            with self.subTest(old=old),self.assertRaises(wp.ContractFailure):
+                wp.require_workflow_contract(files)
+
+    def test_apk_compilation_not_substituted_for_jvm_tests(self):
+        text=self.files()['vlc-pr.yml']
+        for old,new in (('Run JVM unit tests against current source (never cached)','Bypass JVM tests'),
+                        ('ci/apk_reuse.py verify','echo fake-check'),
+                        ('ci/apk_reuse.py seal','echo fake-receipt'),
+                        ('Assemble Android debug APK only if inputs changed','Do not build APK'),
+                        ('ci/_cache/debug-apk/*.apk','application/app/**/*.apk')):
+            files=self.files();files['vlc-pr.yml']=text.replace(old,new)
+            with self.subTest(old=old),self.assertRaises(wp.ContractFailure):
+                wp.require_workflow_contract(files)
 
     def test_no_hidden_static_only_or_skipped_checks(self):
         files=self.files();files['vlc-pr.yml']+='\n      - name: Inert\n        if: false\n'

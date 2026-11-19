@@ -219,5 +219,45 @@ class NativeMediaContracts(unittest.TestCase):
         self.assertRegex(k1, r'^vlc-patched-media-v1-[0-9a-f]{64}$')
 
 
+    def test_maven_central_missing_both_optional_strong_sidecars(self):
+        import urllib.error
+        originals=self.f.official()
+        urls=dict(zip(('aar','pom'),ml.maven_urls('0.13.24')))
+        def fetch(url, **_kwargs):
+            if url.endswith(('.sha256','.sha512')):
+                raise urllib.error.HTTPError(url,404,'missing strong sidecar',None,None)
+            for suffix,expected in urls.items():
+                if url == expected:return originals[suffix]
+            raise AssertionError('Unexpected Maven URL '+url)
+        with mock.patch.object(ml,'fetch_official',side_effect=fetch):
+            self.assertEqual(ml.official_files(root=self.f.root),originals)
+
+    def test_maven_central_mismatched_published_sha256_refused(self):
+        originals=self.f.official()
+        urls=dict(zip(('aar','pom'),ml.maven_urls('0.13.24')))
+        def fetch(url, **_kwargs):
+            if url.endswith('.sha256'):return ('0'*64).encode()
+            for suffix,expected in urls.items():
+                if url == expected:return originals[suffix]
+            raise AssertionError('Unexpected Maven URL '+url)
+        with mock.patch.object(ml,'fetch_official',side_effect=fetch):
+            with self.assertRaisesRegex(ml.MediaContractError,'SHA-256 sidecar mismatch'):
+                ml.official_files(root=self.f.root)
+
+    def test_maven_central_strong_sha512_retained(self):
+        import urllib.error,hashlib
+        originals=self.f.official()
+        urls=dict(zip(('aar','pom'),ml.maven_urls('0.13.24')))
+        def fetch(url, **_kwargs):
+            if url.endswith('.sha256'):
+                raise urllib.error.HTTPError(url,404,'no sha256',None,None)
+            for suffix,expected in urls.items():
+                if url == expected:return originals[suffix]
+                if url == expected+'.sha512':return hashlib.sha512(originals[suffix]).hexdigest().encode()
+            raise AssertionError('Unexpected Maven URL '+url)
+        with mock.patch.object(ml,'fetch_official',side_effect=fetch):
+            self.assertEqual(ml.official_files(root=self.f.root),originals)
+
+
 if __name__ == '__main__':
     unittest.main()

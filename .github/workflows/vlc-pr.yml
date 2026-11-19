@@ -79,23 +79,67 @@ jobs:
         id: abi-cache
         with:
           path: ci/_cache/medialibrary/mla-${{ matrix.abi }}
-          key: mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-${{ hashFiles('ci/medialibrary.py', 'ci/medialibrary.lock.json', 'ci/build_medialibrary_abi.sh', 'buildsystem/compile.sh', 'buildsystem/compile-medialibrary.sh', 'buildsystem/patches/medialibrary/*.patch', 'buildsystem/patches/libvlcpp/*.patch') }}
+          key: mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-${{ hashFiles('ci/medialibrary.lock.json', 'ci/build_medialibrary_abi.sh', 'ci/verify_android_sdk.py', 'buildsystem/compile.sh', 'buildsystem/compile-medialibrary.sh', 'buildsystem/patches/medialibrary/*.patch', 'buildsystem/patches/libvlcpp/*.patch') }}
+          restore-keys: |
+            mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-
+      # A prefix hit may have been created by an older packaging implementation.
+      # The native source lock, OCI digest, patch identity and ELF bytes still
+      # have to match; a stale/tampered cache must fail, never silently pass.
+      - name: Qualify restored ABI before deciding whether to compile
+        id: abi-reuse
+        shell: bash
+        env:
+          VLC_ABI: ${{ matrix.abi }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          native_dir="ci/_cache/medialibrary/mla-$VLC_ABI"
+          if [[ -e "$native_dir" ]]; then
+            # A prefix hit can belong to an earlier source/patch lock.
+            # Legitimate input drift recompiles; corruption under the *same*
+            # source identity must fail, not be accepted as a cache hit.
+            expected="$(python3 -B ci/medialibrary.py source | python3 -c 'import json,sys;print(json.load(sys.stdin)["inputs_sha256"])')"
+            recorded="$(python3 -B - "$native_dir/receipt.json" <<'RECEIPT'
+          import json,sys
+          from pathlib import Path
+          p=Path(sys.argv[1])
+          if not p.is_file() or p.is_symlink(): raise SystemExit('missing/symlinked ABI cache receipt')
+          s=json.loads(p.read_text('utf-8'))
+          v=s.get('inputs_sha256')
+          if not isinstance(v,str) or len(v)!=64: raise SystemExit('malformed ABI cache receipt')
+          print(v)
+          RECEIPT
+            )"
+            if [[ "$recorded" != "$expected" ]]; then
+              if [[ '${{ steps.abi-cache.outputs.cache-hit }}' == 'true' ]]; then
+                echo '::error::Exact native cache key has inconsistent source lock'; exit 1
+              fi
+              echo 'Old native source lock: rebuilding with current upstream patch/input pins'
+              rm -r -- "$native_dir"
+              echo 'reuse=false' >> "$GITHUB_OUTPUT"
+            else
+              python3 -B ci/medialibrary.py verify-abi --abi "$VLC_ABI" --image-digest "$IMAGE_DIGEST"
+              echo 'reuse=true' >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo 'reuse=false' >> "$GITHUB_OUTPUT"
+          fi
       # The VideoLAN images contain the native NDK/toolchain, but their SDK is
       # read-only. Install SDK 36 using Google's supported tools on the runner,
       # then bind only the verified platform and build-tools into the image.
       - uses: actions/setup-java@v4
-        if: steps.abi-cache.outputs.cache-hit != 'true'
+        if: steps.abi-reuse.outputs.reuse != 'true'
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
-        if: steps.abi-cache.outputs.cache-hit != 'true'
+        if: steps.abi-reuse.outputs.reuse != 'true'
         with:
           cmdline-tools-version: '12266719'
           # The action's default includes the retired Android SDK 'tools' package.
           packages: platform-tools
       - name: Install and verify official runner SDK 36
-        if: steps.abi-cache.outputs.cache-hit != 'true'
+        if: steps.abi-reuse.outputs.reuse != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -118,7 +162,7 @@ jobs:
             'platforms;android-36' 'build-tools;36.0.0'
           python3 -B ci/verify_android_sdk.py --sdk "$sdk_root"
       - name: Compile patched native library using KuchiSofts sources
-        if: steps.abi-cache.outputs.cache-hit != 'true'
+        if: steps.abi-reuse.outputs.reuse != 'true'
         shell: bash
         env:
           VLC_IMAGE: ${{ matrix.image }}
@@ -158,7 +202,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ci/_cache/medialibrary/mla-${{ matrix.abi }}
-          key: mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-${{ hashFiles('ci/medialibrary.py', 'ci/medialibrary.lock.json', 'ci/build_medialibrary_abi.sh', 'buildsystem/compile.sh', 'buildsystem/compile-medialibrary.sh', 'buildsystem/patches/medialibrary/*.patch', 'buildsystem/patches/libvlcpp/*.patch') }}
+          key: mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-${{ hashFiles('ci/medialibrary.lock.json', 'ci/build_medialibrary_abi.sh', 'ci/verify_android_sdk.py', 'buildsystem/compile.sh', 'buildsystem/compile-medialibrary.sh', 'buildsystem/patches/medialibrary/*.patch', 'buildsystem/patches/libvlcpp/*.patch') }}
       - name: Pass independently verified native library to assembler
         uses: actions/upload-artifact@v4
         with:
@@ -263,19 +307,57 @@ jobs:
           set -euo pipefail
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;21.4.7075529'
           printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
-      - name: Compile against locally verified patched MediaLibrary
+      - name: Derive APK cache key from all non-CI tracked build inputs
+        id: apk-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ImageVersion:?GitHub runner image version unavailable}"
+          key="$(python3 -B ci/apk_reuse.py key --runner-image "$ImageVersion" | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')"
+          printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
+      - name: Restore exact verified debug APK cache
+        id: apk-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ci/_cache/debug-apk
+          key: ${{ steps.apk-key.outputs.key }}
+      - name: Validate cached APK before bypassing assembly
+        if: steps.apk-cache.outputs.cache-hit == 'true'
+        shell: bash
+        run: python3 -B ci/apk_reuse.py verify --runner-image "$ImageVersion"
+      - name: Run JVM unit tests against current source (never cached)
         shell: bash
         env:
           RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
         run: |
           set -euo pipefail
           python3 -B ci/medialibrary.py verify-maven
-          gradle --no-daemon --stacktrace :application:app:testDebugUnitTest :application:app:assembleDebug
+          gradle --no-daemon --stacktrace :application:app:testDebugUnitTest
+      - name: Assemble Android debug APK only if inputs changed
+        if: steps.apk-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
+        run: gradle --no-daemon --stacktrace :application:app:assembleDebug
+      - name: Qualify unchanged or newly built APK and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ '${{ steps.apk-cache.outputs.cache-hit }}' != 'true' ]]; then
+            python3 -B ci/apk_reuse.py seal --runner-image "$ImageVersion"
+          fi
+          python3 -B ci/apk_reuse.py verify --runner-image "$ImageVersion"
+      - name: Cache verified debug APK for identical source/toolchain inputs
+        if: steps.apk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ci/_cache/debug-apk
+          key: ${{ steps.apk-key.outputs.key }}
       - name: Upload unsigned debug APKs for inspection
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: vlc-android-debug-${{ github.sha }}
-          path: application/app/build/outputs/apk/debug/**/*.apk
+          path: ci/_cache/debug-apk/*.apk
           if-no-files-found: error
           retention-days: 7

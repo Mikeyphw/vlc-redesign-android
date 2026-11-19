@@ -220,7 +220,14 @@ def fetch_official(url: str, *, timeout: int = 90) -> bytes:
     if not url.startswith('https://repo.maven.apache.org/maven2/' + GROUP_PATH + '/0.13.24/'):
         refuse('untrusted or unexpected Maven Central URL')
     req = urllib.request.Request(url, headers={'User-Agent': 'vlc-patched-medialibrary-source-gate/1'})
-    with urllib.request.urlopen(req, timeout=timeout) as result:
+    try:
+        response = urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        # Preserve an exact URL for diagnostics; 404 of AAR/POM is different
+        # from Maven Central's routinely absent optional strong sidecars.
+        raise urllib.error.HTTPError(url, exc.code, f'{exc.reason} url={url}',
+                                     exc.headers, exc.fp) from exc
+    with response as result:
         if result.geturl() != url:
             refuse('Maven Central redirected to another source')
         data = result.read(80 * 1024 * 1024 + 1)
@@ -235,18 +242,41 @@ def official_files(root: Path = ROOT) -> dict[str, bytes]:
     result = {}
     for suffix, url in urls.items():
         binary = fetch_official(url)
-        # Maven Central's cryptographic sidecars are authoritative for the
-        # versioned Java/AAR baseline. Never downgrade to MD5/SHA-1.
+        # Strong checksum sidecars are optional on Maven Central. A 404 for
+        # BOTH strong sidecars is not a missing AAR/POM. We still require the
+        # exact official HTTPS origin, strict AAR/POM structure and a freshly
+        # computed SHA-256 bound to the immutable local provenance/cache.
+        # This is transport provenance, NOT an independent publisher signature.
+        sidecar = 'none'
         try:
-            signed_digest = base_checksum_text(fetch_official(url + '.sha256').decode('utf-8'))
-            if sha(binary) != signed_digest:
-                refuse('Maven Central sidecar SHA-256 mismatch: ' + suffix)
+            claimed = base_checksum_text(fetch_official(url + '.sha256').decode('utf-8'))
+            if sha(binary) != claimed:
+                refuse('Maven Central SHA-256 sidecar mismatch: ' + suffix)
+            sidecar = 'sha256'
         except urllib.error.HTTPError as exc:
             if exc.code != 404:
                 raise
-            digest512 = fetch_official(url + '.sha512').decode('utf-8').strip().split()[0].lower()
-            if not re.fullmatch(r'[0-9a-f]{128}\Z', digest512) or hashlib.sha512(binary).hexdigest() != digest512:
-                refuse('Maven Central sidecar SHA-512 mismatch: ' + suffix)
+            try:
+                claimed512 = fetch_official(url + '.sha512').decode('utf-8').strip().split()[0].lower()
+                if not re.fullmatch(r'[0-9a-f]{128}\Z', claimed512) or hashlib.sha512(binary).hexdigest() != claimed512:
+                    refuse('Maven Central SHA-512 sidecar mismatch: ' + suffix)
+                sidecar = 'sha512'
+            except urllib.error.HTTPError as secondary:
+                if secondary.code != 404:
+                    raise
+        if suffix == 'aar':
+            import io
+            with zipfile.ZipFile(io.BytesIO(binary)) as archive:
+                if (archive.testzip() is not None or 'classes.jar' not in archive.namelist()
+                        or 'AndroidManifest.xml' not in archive.namelist()
+                        or any('jni/' + abi + '/libmla.so' not in archive.namelist() for abi in ABIS)):
+                    refuse('official Maven AAR is structurally invalid')
+        else:
+            # This is only structural validation of the official identity;
+            # patched publication still requires separate pom_reversion checks.
+            pom_reversion(binary, lock['official_version'], lock['patched_version'])
+        print(f'VLC_MAVEN_BASELINE suffix={suffix} sha256={sha(binary)} sidecar={sidecar} url={url}',
+              file=sys.stderr)
         result[suffix] = binary
     return result
 

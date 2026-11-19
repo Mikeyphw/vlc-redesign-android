@@ -113,3 +113,50 @@ Tools 36.0.0; the Android job still provisions NDK 21.4.7075529.
 Current workflow negative tests reject any missing, unpinned, or obsolete
 setup-android package configuration, and source/ABI/cache/Maven/Gradle gates
 remain required. This does not establish a hosted build pass.
+
+## Incremental source-built artifacts (19 November 2026)
+
+Hosted run [44518789481](https://github.com/Mikeyphw/vlc-redesign-android/actions/runs/44518789481)
+verified all four KuchiSofts-patched MediaLibrary ELF builds and uploaded their
+source/image/patch/SHA-256 receipts, but Maven Central baseline retrieval failed
+with HTTP 404 after all four native receipts passed. The original script
+incorrectly assumed that Maven Central publishes `.sha256` or `.sha512`
+**sidecar files for every AAR and POM**. Both may return 404 even when the
+versioned AAR and POM exist. The source-bound fetcher now differentiates the
+exact failing URL, verifies a published SHA-256 or SHA-512 sidecar when present,
+and otherwise accepts **only** the exact official TLS endpoint plus valid
+AAR/POM contents and computes the local SHA-256 for subsequent cache/package
+verification. It never downgrades to MD5 or SHA-1. A missing AAR or POM, bad
+structure, changed origin/redirect, checksum mismatch, or non-404 HTTP error
+still fails. A TLS-only baseline is **not** an independently signed publisher
+attestation; signed-release qualification requires separately approved trust.
+
+Native cache identity is now based on the pinned source/patch blobs, compiler
+script, official SDK verifier and resolved VideoLAN image digest—not the Python
+Maven packager. Existing `mla-v1-*` native caches from the successful four-ABI
+run can be recovered via an image-scoped prefix. **Every recovered binary is
+verified** against the current patch/source lock, actual OCI digest, ELF type,
+and recorded SHA-256 *before* native compilation is skipped. Missing caches
+trigger compilation. Older source-lock receipts are rejected and replaced by
+a fresh compile; corrupted receipts/ELFs for the current lock fail closed.
+The original ABI cache receipt schema and verification are unchanged. The
+Maven cache still depends on both original upstream AAR contents and native
+receipts, and is verified before Android compilation.
+
+The new `ci/apk_reuse.py` forms an APK cache key from Git-tracked Android/build
+inputs (excluding only CI/docs metadata), the **verified patched Maven AAR, POM and provenance SHA-256
+digests**, current GitHub runner image revision and pinned Android/JDK/Gradle
+versions. On an exact hit, it revalidates APK ZIP contents, manifest/DEX, strict
+file inventory and SHA-256 against its source/toolchain receipt. **JVM unit
+and regression tests still execute on every PR run, even on an APK cache hit.**
+Only `assembleDebug` is skipped when an identical, successfully JVM-tested
+APK exists; cache misses assemble and seal the actual APK. A corrupted cache is
+never treated as successful and never silently overrides current source.
+This cache contains only debug binaries, not release signing keys or production
+artifacts; there is no approved signing/release substitution.
+
+The first new hosted run may still need to build its APK because no successful
+APK cache exists yet. Subsequent CI/docs-only commits can reuse that debug APK
+when the tracked build inputs, patched AAR, runner image and toolchain match.
+Unpinned external dependency resolution remains a separate release-qualification
+risk and is not represented as reproducible byte-for-byte compilation.

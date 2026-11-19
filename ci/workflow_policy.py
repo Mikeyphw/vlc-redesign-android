@@ -76,7 +76,7 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
                  'actions/upload-artifact@v4', 'actions/download-artifact@v4',
                  'if-no-files-found: error', "gradle-version: '9.6.0'",
                  'RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository',
-                 ':application:app:testDebugUnitTest :application:app:assembleDebug',
+                 ':application:app:testDebugUnitTest', ':application:app:assembleDebug',
                  'docker pull "$VLC_IMAGE"', 'sha256:'):
         must_have(source, code, 'source-built patched Maven workflow')
     # setup-android@v3 defaults to `tools platform-tools`. Google removed
@@ -126,8 +126,24 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
             native_segment.index('Compile patched native library using KuchiSofts sources')):
         raise ContractFailure('runner SDK installation must follow cache check and precede native compilation')
     setup_segment=native_segment.split('Restore content-keyed verified ABI cache',1)[1].split('Compile patched native library using KuchiSofts sources',1)[0]
-    if setup_segment.count("if: steps.abi-cache.outputs.cache-hit != 'true'") < 3:
+    if setup_segment.count("if: steps.abi-reuse.outputs.reuse != 'true'") < 3:
         raise ContractFailure('runner SDK setup must not run on a verified ABI cache hit')
+    # Native rebuild keys exclude the Python *verifier* and *Maven packager*:
+    # those must rerun against a receipt, not force four C/C++ recompilations.
+    if "hashFiles('ci/medialibrary.py'" in native_segment:
+        raise ContractFailure('native compiler cache key depends on packaging implementation')
+    if 'restore-keys: |' not in native_segment or 'mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-' not in native_segment:
+        raise ContractFailure('prior exact-image native caches cannot be recovered')
+    for required in ('Qualify restored ABI before deciding whether to compile',
+                     'id: abi-reuse',
+                     'python3 -B ci/medialibrary.py verify-abi --abi "$VLC_ABI" --image-digest "$IMAGE_DIGEST"',
+                     "if: steps.abi-reuse.outputs.reuse != 'true'",
+                     "if: steps.abi-cache.outputs.cache-hit != 'true'"):
+        if required not in native_segment:
+            raise ContractFailure('unverified or nonincremental native cache: ' + required)
+    if (native_segment.index('Qualify restored ABI before deciding whether to compile') >
+            native_segment.index('Compile patched native library using KuchiSofts sources')):
+        raise ContractFailure('native cached ELF must be verified before skipping compiler')
     if native_segment.count('python3 -B ci/verify_android_sdk.py --sdk "$sdk_root"') != 2:
         raise ContractFailure('runner SDK must be verified both after install and before mount')
     native_script=(ROOT/'ci/build_medialibrary_abi.sh').read_text('utf-8')
@@ -182,6 +198,38 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
             source.index('python3 -B ci/medialibrary.py verify-maven', source.index('  android-debug:')) >
             source.index('gradle --no-daemon', source.index('  android-debug:'))):
         raise ContractFailure('Gradle is not gated on a verified local Maven AAR')
+    # APK reuse can skip only assembly for identical source/toolchain/Maven
+    # content. Unit tests and independent artifact verification remain required.
+    android = source.split('  android-debug:',1)[1]
+    required = ('Derive APK cache key from all non-CI tracked build inputs',
+                'actions/cache/restore@v4', 'ci/apk_reuse.py key',
+                'Validate cached APK before bypassing assembly',
+                'ci/apk_reuse.py verify',
+                'Run JVM unit tests against current source (never cached)',
+                'Assemble Android debug APK only if inputs changed',
+                'ci/apk_reuse.py seal',
+                'Cache verified debug APK for identical source/toolchain inputs',
+                'ci/_cache/debug-apk/*.apk',
+                "if: steps.apk-cache.outputs.cache-hit == 'true'",
+                "if: steps.apk-cache.outputs.cache-hit != 'true'")
+    for code in required:
+        if code not in android:
+            raise ContractFailure('APK content-addressed reuse/test gate missing: ' + code)
+    if not (android.index('Reject missing/tampered local patched MediaLibrary') <
+            android.index('Derive APK cache key') <
+            android.index('Validate cached APK before bypassing assembly') <
+            android.index('Run JVM unit tests against current source') <
+            android.index('Assemble Android debug APK only if inputs changed') <
+            android.index('Qualify unchanged or newly built APK and checksums') <
+            android.index('Upload unsigned debug APKs')):
+        raise ContractFailure('APK source/cache/unit-test/build verification order unsafe')
+    apk_gate = ROOT / 'ci/apk_reuse.py'
+    if not apk_gate.is_file() or apk_gate.is_symlink():
+        raise ContractFailure('source-owned APK provenance validator missing')
+    for key in ('fingerprint_tree', 'source_fingerprint', 'verify_apk',
+                'patched_aar_sha256', 'jvm_tests', 'APK SHA256 mismatch'):
+        if key not in apk_gate.read_text('utf-8'):
+            raise ContractFailure('APK validator missing required current-source proof: '+key)
     if ('VLC_RD_MAVEN_BASE_URL' in source or 'continue-on-error:' in source or '|| true' in source):
         raise ContractFailure('external Maven dependency or validation bypass returned')
     if re.search(r'(?m)^\s+if:\s*(?:false|always\(\))\s*$', source):
