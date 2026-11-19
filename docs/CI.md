@@ -131,3 +131,38 @@ remain unchanged.
 These changes address the **observed permission failure only**. A later native
 compile, Maven repack or Android Gradle failure must be evaluated from its
 actual hosted logs. Local regression tests cannot prove that all four ABIs build.
+
+## Native SDK and Gradle bootstrap (follow-up to hosted run 44446176595)
+
+The source contract job passed, and the four VideoLAN native image jobs advanced
+past the previous workspace-permission failure. Native jobs then failed while
+bootstrapping root Gradle: the OCI image's `/sdk/android-sdk-linux` lacks API 36
+and is read-only under the correctly matched host UID; configuring the complete
+Android root project to generate a wrapper concurrently triggered Vanniktech's
+`release` publication-variant error. These are **native CI provisioning and
+unrelated publication bootstrap failures**, not evidence of a MediaLibrary
+compiler failure.
+
+`ci/build_medialibrary_abi.sh` now composes a user-owned SDK overlay below the
+isolated `/tmp/vlc-ci-home`: it symlinks unchanged read-only image toolchain
+packages, copies only small Android licenses, and installs API 36 / Build Tools
+36 into independent writable directories with `sdkmanager --sdk_root`. Source
+`ANDROID_NDK` remains the original VideoLAN image toolchain. The job refuses
+unknown base SDK locations, malformed installs, missing `android.jar`, and
+unwritable SDKs without using root, sudo, or recursive ownership changes.
+
+The job generates a genuine Gradle 9.6 wrapper from an isolated minimal Gradle
+project and checks its distribution SHA-256 against KuchiSofts' `compile.sh`
+pin (`bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01`).
+That avoids configuring the whole Android app *solely to create a wrapper*.
+After upstream LibVLC compilation, the job invokes the same pinned
+`buildsystem/compile-medialibrary.sh` used inside KuchiSofts' `compile.sh`,
+without running an unrelated MediaLibrary `assembleRelease`/publishing variant;
+the separately checked official Java AAR is patched with the resulting four
+verified `libmla.so` files later in the pipeline. The original source pins,
+patch files, OCI-image identity and negative-cache gates remain mandatory.
+
+This correction requires a **new hosted run**. Offline/local tests validate
+script syntax, source contracts and deliberate negative cases; they do not
+prove SDK downloads, VideoLAN native compilation, patched Maven packing or an
+Android debug APK. GitHub-hosted CI must establish each separately.

@@ -95,6 +95,27 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
                      '${HOME:-}', 'mkdir -p "$HOME"', '[ ! -w "$HOME" ]'):
         if required not in native_script:
             raise ContractFailure('native script workspace permission/home guard missing: '+required)
+    # The hosted images carry a read-only SDK. Never repeat Gradle wrapper
+    # generation against the entire VLC project or change upstream publishers.
+    for required in ('sdk="$HOME/android-sdk"',
+                     'mkdir -p "$sdk/platforms" "$sdk/build-tools" "$sdk/licenses"',
+                     'cp -a "$base_sdk/licenses/." "$sdk/licenses/"',
+                     'python3 -B - "$sdkmanager" "$sdk"',
+                     "'platforms;android-36'", "'build-tools;36.0.0'",
+                     'sdk/platforms/android-36/android.jar',
+                     'export ANDROID_SDK="$sdk" ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk"',
+                     'gradle --no-daemon --project-dir "$bootstrap" wrapper',
+                     '--gradle-distribution-sha256-sum bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01',
+                     'distributionSha256Sum=bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01',
+                     'export GRADLE_PATH_VERSION=9.6.0',
+                     './buildsystem/compile.sh -a "$ABI" -t -l --release',
+                     './buildsystem/compile-medialibrary.sh -a "$ABI" --release'):
+        if required not in native_script:
+            raise ContractFailure('SDK overlay, checksum-pinned wrapper or native compiler guard missing: '+required)
+    if './buildsystem/compile.sh -a "$ABI" -t -ml --release -b' in native_script:
+        raise ContractFailure('native job must not execute unrelated MediaLibrary Gradle publication')
+    if re.search(r'(?m)^\s*(?:chmod -R|chown|sudo |su )', native_script):
+        raise ContractFailure('unsafe native SDK/workspace privilege escalation')
     # Only official documented VideoLAN images and four ABI outputs are accepted.
     from medialibrary import load_lock
     lock = load_lock(ROOT)

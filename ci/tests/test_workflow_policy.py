@@ -154,6 +154,51 @@ class CIContracts(unittest.TestCase):
         files['vlc-pr.yml']=files['vlc-pr.yml'].replace('--user "$(id -u):$(id -g)"', '--user 0:0',1)
         with self.assertRaises(wp.ContractFailure): wp.require_workflow_contract(files)
 
+    def test_native_sdk_overlay_and_isolated_wrapper_contract(self):
+        from subprocess import run
+        source=self.f.root/'ci/build_medialibrary_abi.sh'
+        result=run(['bash','-n',str(source)],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        wp.check_repository(self.f.root)
+        text=source.read_text('utf-8')
+        self.assertIn('platforms;android-36',text)
+        self.assertIn('gradle-wrapper-bootstrap',text)
+        self.assertIn('compile-medialibrary.sh -a "$ABI" --release',text)
+        self.assertNotIn('compile.sh -a "$ABI" -t -ml --release -b',text)
+
+    def test_removing_sdk_and_wrapper_integrity_guards_is_refused(self):
+        script=self.f.root/'ci/build_medialibrary_abi.sh'
+        original=script.read_text('utf-8')
+        for token in ('sdk="$HOME/android-sdk"',
+                      'mkdir -p "$sdk/platforms" "$sdk/build-tools" "$sdk/licenses"',
+                      'python3 -B - "$sdkmanager" "$sdk"',
+                      'export ANDROID_SDK="$sdk" ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk"',
+                      'gradle --no-daemon --project-dir "$bootstrap" wrapper',
+                      '--gradle-distribution-sha256-sum bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01',
+                      'export GRADLE_PATH_VERSION=9.6.0',
+                      './buildsystem/compile-medialibrary.sh -a "$ABI" --release'):
+            self.assertIn(token,original)
+            script.write_text(original.replace(token,'# omitted preflight',1))
+            with self.subTest(token=token),self.assertRaises(wp.ContractFailure):
+                wp.check_repository(self.f.root)
+            script.write_text(original)
+
+    def test_unrelated_gradle_publication_reintroduced_is_refused(self):
+        script=self.f.root/'ci/build_medialibrary_abi.sh'
+        original=script.read_text('utf-8')
+        script.write_text(original+'\n./buildsystem/compile.sh -a "$ABI" -t -ml --release -b\n')
+        with self.assertRaises(wp.ContractFailure): wp.check_repository(self.f.root)
+        script.write_text(original)
+
+    def test_unsafe_root_or_chown_native_escalation_refused(self):
+        script=self.f.root/'ci/build_medialibrary_abi.sh'
+        original=script.read_text('utf-8')
+        for token in ('sudo chmod -R 777 /workspace','chown -R 0:0 /workspace'):
+            script.write_text(original+'\n'+token+'\n')
+            with self.subTest(token=token),self.assertRaises(wp.ContractFailure):
+                wp.check_repository(self.f.root)
+        script.write_text(original)
+
     def test_no_hidden_static_only_or_skipped_checks(self):
         files=self.files();files['vlc-pr.yml']+='\n      - name: Inert\n        if: false\n'
         with self.assertRaises(wp.ContractFailure):wp.require_workflow_contract(files)

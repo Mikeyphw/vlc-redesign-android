@@ -42,3 +42,14 @@ documentation. The source lock, OCI images, patch identities, native build
 commands and cache integrity policy are retained. A fresh native Devtool
 transaction must be source-pinned to that existing PR head, and create a new
 durable session. Do not reapply the already committed prior package.
+
+## Native SDK and Gradle bootstrap repair
+
+The four OCI jobs on source SHA `ead5742e73505bc7ea8292b0183d0d1955487787`
+failed during Gradle setup, before compiling MediaLibrary, because Android SDK
+36 was unavailable in a read-only image SDK and the wrapper generation
+configured unrelated Maven publishing. The consolidated follow-up changes
+only the CI native script, existing source-owned tests/contracts and docs; it
+keeps the entire upstream media and Android implementation unchanged. Use a
+new native Devtool source-bound artifact against the exact PR head, and a
+new delivery session. A committed apply must never be repeated.
