@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "group": "org.videolan.android",
+  "module": "medialibrary-all",
+  "official_version": "0.13.24",
+  "patched_version": "0.13.24-rd1",
+  "medialibrary_commit": "8d573499ae79298f772e23bfc46dabf486843c25",
+  "libvlcjni_commit": "0b8dc65efb203c86a0476bc337ddd99ecf1c0ef6",
+  "images": {
+    "armeabi-v7a": "registry.videolan.org/vlc-debian-android-3.0:20260701183656",
+    "arm64-v8a": "registry.videolan.org/vlc-debian-android:20260611225331",
+    "x86": "registry.videolan.org/vlc-debian-android-3.0:20260701183656",
+    "x86_64": "registry.videolan.org/vlc-debian-android:20260611225331"
+  },
+  "patches": {
+    "buildsystem/patches/medialibrary/0001-MetadataAnalyzer-a-cover-stored-as-a-video-track-doe.patch": "c268473185113a34b7837aa88b342f53ad299902",
+    "buildsystem/patches/libvlcpp/0001-MediaPlayer-always-use-set_time-set_position-fast-ar.patch": "ab5ab0ced05481d552222f63e3be7691819a8735"
+  }
+}

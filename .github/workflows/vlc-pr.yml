@@ -24,9 +24,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Positive and adversarial upstream-merge tests
+      - name: Positive and adversarial upstream/source/CI tests
         run: python3 -B -m unittest discover -s ci/tests -p 'test_*.py' -v
-      - name: Source provenance and license controls
+      - name: Provenance, licensing and exact source-lock preflight
         shell: bash
         run: |
           set -euo pipefail
@@ -34,34 +34,168 @@ jobs:
           test -s UPSTREAM.md
           test -s docs/ARCHITECTURE.md
           test -s application/vlc-android/src/org/videolan/vlc/gui/MainActivity.kt
-          test -s buildsystem/redesign/MEDIALIBRARY.md
-          test -f application/app/build.gradle
-          # Standalone source-owned validator avoids the self-matching grep trap.
           python3 -B ci/workflow_policy.py
+          python3 -B ci/medialibrary.py source
 
-  android-debug:
-    name: Android hosted debug build (blocked until patched Maven source configured)
+  media-native:
+    name: Patched MediaLibrary native (${{ matrix.abi }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 210
     needs: source-contracts
-    env:
-      RD_MAVEN: ${{ vars.VLC_RD_MAVEN_BASE_URL }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: armeabi-v7a
+            image: registry.videolan.org/vlc-debian-android-3.0:20260701183656
+          - abi: arm64-v8a
+            image: registry.videolan.org/vlc-debian-android:20260611225331
+          - abi: x86
+            image: registry.videolan.org/vlc-debian-android-3.0:20260701183656
+          - abi: x86_64
+            image: registry.videolan.org/vlc-debian-android:20260611225331
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Enforce patched MediaLibrary dependency
+      - name: Verify source and pinned patch blobs
+        run: python3 -B ci/medialibrary.py source
+      - name: Resolve actual VideoLAN OCI image digest
+        id: image
+        shell: bash
+        env:
+          VLC_IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          docker pull "$VLC_IMAGE"
+          image_digest="$(docker image inspect "$VLC_IMAGE" --format '{{index .RepoDigests 0}}')"
+          if [[ "$image_digest" != registry.videolan.org/*@sha256:* ]]; then
+            echo '::error::Source image is not a digest-pinned VideoLAN image'; exit 1
+          fi
+          printf 'digest=%s\n' "$image_digest" >> "$GITHUB_OUTPUT"
+          printf 'digest_hex=%s\n' "${image_digest##*@sha256:}" >> "$GITHUB_OUTPUT"
+      - name: Restore content-keyed verified ABI cache
+        uses: actions/cache/restore@v4
+        id: abi-cache
+        with:
+          path: ci/_cache/medialibrary/mla-${{ matrix.abi }}
+          key: mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-${{ hashFiles('ci/medialibrary.py', 'ci/medialibrary.lock.json', 'ci/build_medialibrary_abi.sh', 'buildsystem/compile.sh', 'buildsystem/compile-medialibrary.sh', 'buildsystem/patches/medialibrary/*.patch', 'buildsystem/patches/libvlcpp/*.patch') }}
+      - name: Compile patched native library using KuchiSofts sources
+        if: steps.abi-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          VLC_IMAGE: ${{ matrix.image }}
+          VLC_ABI: ${{ matrix.abi }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/bash \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace" \
+            --workdir /workspace "$VLC_IMAGE" \
+            -euo pipefail ci/build_medialibrary_abi.sh "$VLC_ABI"
+          python3 -B ci/medialibrary.py collect-abi \
+            --abi "$VLC_ABI" --image-digest "$IMAGE_DIGEST" \
+            --native "medialibrary/jni/libs/$VLC_ABI/libmla.so"
+      - name: Verify ABI source, OCI digest and ELF (including cache hits)
+        shell: bash
+        env:
+          VLC_ABI: ${{ matrix.abi }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          python3 -B ci/medialibrary.py verify-abi --abi "$VLC_ABI" --image-digest "$IMAGE_DIGEST"
+      - name: Cache verified native ABI for subsequent runs
+        if: steps.abi-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ci/_cache/medialibrary/mla-${{ matrix.abi }}
+          key: mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-${{ hashFiles('ci/medialibrary.py', 'ci/medialibrary.lock.json', 'ci/build_medialibrary_abi.sh', 'buildsystem/compile.sh', 'buildsystem/compile-medialibrary.sh', 'buildsystem/patches/medialibrary/*.patch', 'buildsystem/patches/libvlcpp/*.patch') }}
+      - name: Pass independently verified native library to assembler
+        uses: actions/upload-artifact@v4
+        with:
+          name: mla-${{ matrix.abi }}
+          path: ci/_cache/medialibrary/mla-${{ matrix.abi }}/
+          if-no-files-found: error
+          retention-days: 2
+
+  media-package:
+    name: Verified patched Maven AAR (four ABIs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: media-native
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download four source-bound ABI libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mla-*
+          merge-multiple: false
+          path: ci/_cache/medialibrary
+      - name: Verify native artifacts, fetch checksum-verified official Java AAR/POM
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${RD_MAVEN:-}" ]]; then
-            echo '::error::VLC_RD_MAVEN_BASE_URL is absent. Upstream requires patched org.videolan.android:medialibrary-all:0.13.24-rd1. No fallback or skipped build is allowed.'
-            exit 1
-          fi
-          if [[ ! "$RD_MAVEN" =~ ^https:// ]]; then
-            echo '::error::VLC_RD_MAVEN_BASE_URL must be an HTTPS Maven repository URL.'
-            exit 1
-          fi
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            python3 -B ci/medialibrary.py verify-abi --abi "$abi"
+          done
+          python3 -B ci/medialibrary.py fetch-official
+      - name: Derive Maven cache key from upstream AAR and verified native receipts
+        id: package-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          key="$(python3 -B ci/medialibrary.py cache-key | python3 -c 'import json,sys; print(json.load(sys.stdin)["cache_key"])')"
+          printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
+      - name: Restore exact verified Maven AAR cache
+        uses: actions/cache/restore@v4
+        id: package-cache
+        with:
+          path: ci/_maven/repository
+          key: ${{ steps.package-key.outputs.key }}
+      - name: Assemble patched Maven AAR from verified upstream components
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        run: python3 -B ci/medialibrary.py package
+      - name: Verify cached/new Maven AAR, POM and every patched native ABI
+        run: python3 -B ci/medialibrary.py verify-maven
+      - name: Cache exact verified local Maven repository
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ci/_maven/repository
+          key: ${{ steps.package-key.outputs.key }}
+      - name: Deliver patched Maven artifact to Android job
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-medialibrary-maven
+          path: ci/_maven/repository/
+          if-no-files-found: error
+          retention-days: 2
+
+  android-debug:
+    name: Android hosted debug APK + JVM tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: [source-contracts, media-package]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-medialibrary-maven
+          path: ci/_maven/repository
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mla-*
+          merge-multiple: false
+          path: ci/_cache/medialibrary
+      - name: Reject missing/tampered local patched MediaLibrary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B ci/medialibrary.py verify-maven
+          test -s ci/_maven/repository/org/videolan/android/medialibrary-all/0.13.24-rd1/medialibrary-all-0.13.24-rd1.aar
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -76,9 +210,14 @@ jobs:
           set -euo pipefail
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;21.4.7075529'
           printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
-      - name: Compile Android debug app with upstream dependency identity
+      - name: Compile against locally verified patched MediaLibrary
         shell: bash
-        run: gradle --no-daemon --stacktrace :application:app:testDebugUnitTest :application:app:assembleDebug
+        env:
+          RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
+        run: |
+          set -euo pipefail
+          python3 -B ci/medialibrary.py verify-maven
+          gradle --no-daemon --stacktrace :application:app:testDebugUnitTest :application:app:assembleDebug
       - name: Upload unsigned debug APKs for inspection
         if: success()
         uses: actions/upload-artifact@v4
