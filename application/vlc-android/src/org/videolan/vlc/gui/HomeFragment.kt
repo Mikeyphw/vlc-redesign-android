@@ -276,7 +276,9 @@ class HomeFragment : BaseFragment(), CtxActionReceiver, Medialibrary.HistoryCb, 
                 b.rdSubtitle.setTextColor(0xFF6B6B6B.toInt())
             }
             if (!card.folder && card.pin == null) loadImage(b.rdCover, media, width, card = true)
-            b.root.contentDescription = media.title
+            // Announce the secondary artist information, without reading decorative cover views twice.
+            b.root.contentDescription = listOfNotNull(media.title?.takeIf { it.isNotBlank() },
+                b.subtitle?.takeIf { it.isNotBlank() }).joinToString(", ")
             if (tv) b.root.setOnKeyListener { v, code, event -> rowKey(section, v, code, event) }
             b.root.setOnClickListener { onCardClick(section, holder.bindingAdapterPosition) }
             b.root.setOnLongClickListener {

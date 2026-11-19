@@ -70,6 +70,13 @@ private const val TAG = "Navigator"
 class Navigator : NavigationBarView.OnItemSelectedListener, DefaultLifecycleObserver, INavigator {
 
     private val defaultFragmentId = R.id.nav_home
+    // Stable page identities survive resource-ID changes after an app update.
+    private val savedPageKey = "rd_nav_page"
+    private val pageNames = mapOf(
+        R.id.nav_home to "home", R.id.nav_video to "video", R.id.nav_audio to "audio",
+        R.id.nav_directories to "directories", R.id.nav_playlists to "playlists",
+        R.id.nav_more to "more", R.id.nav_tv to "tv"
+    )
     override var currentFragmentId: Int = 0
     private var currentFragment: Fragment? = null
     private lateinit var activity: MainActivity
@@ -83,7 +90,13 @@ class Navigator : NavigationBarView.OnItemSelectedListener, DefaultLifecycleObse
         activity = this
         this@Navigator.settings = settings
         forExpresso = intent.parcelableList(EXTRA_FOR_ESPRESSO)
-        currentFragmentId = intent.getIntExtra(EXTRA_TARGET, 0)
+        val requested = intent.getIntExtra(EXTRA_TARGET, 0)
+        val restored = state?.getInt(EXTRA_TARGET, 0) ?: 0
+        currentFragmentId = when {
+            restored in pageNames && (restored != R.id.nav_tv || org.videolan.vlc.livetv.LiveTv.enabled) -> restored
+            requested in pageNames || idIsExtension(requested) -> requested
+            else -> 0
+        }
         if (state !== null) {
             currentFragment = supportFragmentManager.getFragment(state, "current_fragment")
         }
@@ -101,6 +114,8 @@ class Navigator : NavigationBarView.OnItemSelectedListener, DefaultLifecycleObse
         refreshPages()
         if (currentFragmentId == R.id.nav_tv && !org.videolan.vlc.livetv.LiveTv.enabled) currentFragmentId = defaultFragmentId
         if (currentFragment === null && !currentIdIsExtension()) showFragment(if (currentFragmentId != 0) currentFragmentId else savedPage())
+        // Restored fragments must also restore the checked icon, without replacing their content.
+        if (currentFragment != null && currentFragmentId in pages) updateCheckedItem(currentFragmentId)
         navigationView.forEach { it.setOnItemSelectedListener(this) }
     }
 
@@ -109,8 +124,13 @@ class Navigator : NavigationBarView.OnItemSelectedListener, DefaultLifecycleObse
      * to the next: after an update, an id that is no page any more opened the video page while the bar still marked
      * Home. One that is none of today's pages (or TV with the Live TV add-on off) opens the default page.
      */
-    private fun savedPage(): Int = settings.getInt(KEY_FRAGMENT_ID, defaultFragmentId).let {
-        if (it !in pages || (it == R.id.nav_tv && !org.videolan.vlc.livetv.LiveTv.enabled)) defaultFragmentId else it
+    private fun savedPage(): Int {
+        // Read the stable preference first; keep VLC's legacy integer for existing installations.
+        val stable = settings.getString(savedPageKey, null)?.let { name ->
+            pageNames.entries.firstOrNull { it.value == name }?.key
+        }
+        val page = stable ?: settings.getInt(KEY_FRAGMENT_ID, defaultFragmentId)
+        return if (page !in pages || (page == R.id.nav_tv && !org.videolan.vlc.livetv.LiveTv.enabled)) defaultFragmentId else page
     }
 
     private val pages = setOf(R.id.nav_home, R.id.nav_video, R.id.nav_audio, R.id.nav_directories, R.id.nav_playlists, R.id.nav_more, R.id.nav_tv)
@@ -179,8 +199,12 @@ class Navigator : NavigationBarView.OnItemSelectedListener, DefaultLifecycleObse
     }
 
     private fun getTag(id: Int) = when (id) {
+        R.id.nav_home -> "rd/home"
+        R.id.nav_video -> ID_VIDEO
         R.id.nav_audio -> ID_AUDIO
         R.id.nav_directories -> ID_DIRECTORIES
+        R.id.nav_playlists -> "rd/playlists"
+        R.id.nav_more -> "rd/more"
         R.id.nav_tv -> "tv"
         else -> ID_VIDEO
     }
@@ -234,9 +258,12 @@ class Navigator : NavigationBarView.OnItemSelectedListener, DefaultLifecycleObse
                 val current = it.menu.findItem(currentId)
                 if (current != null) current.isChecked = false
                 target.isChecked = true
-                /* Save the tab status in pref */
-                settings.edit { putInt(KEY_FRAGMENT_ID, id) }
             }
+        }
+        // Always persist a real page selection, including pages hidden from the current sidebar.
+        if (id in pages) settings.edit {
+            putInt(KEY_FRAGMENT_ID, id)
+            putString(savedPageKey, pageNames.getValue(id))
         }
     }
 

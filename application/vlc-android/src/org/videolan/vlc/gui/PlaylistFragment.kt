@@ -192,7 +192,7 @@ class PlaylistFragment : BaseAudioBrowser<PlaylistsViewModel>(), SwipeRefreshLay
                     viewModel.provider.loading.value == true && empty -> EmptyLoadingState.LOADING
                     empty && viewModel.provider.onlyFavorites -> EmptyLoadingState.EMPTY_FAVORITES
                     empty && viewModel.filterQuery != null -> EmptyLoadingState.EMPTY_SEARCH
-                    empty -> EmptyLoadingState.EMPTY_SEARCH
+                    empty -> EmptyLoadingState.EMPTY
                     else -> EmptyLoadingState.NONE
                 }
     }

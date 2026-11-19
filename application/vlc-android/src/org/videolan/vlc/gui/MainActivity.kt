@@ -294,7 +294,7 @@ class MainActivity : ContentActivity(),
 
     override fun onSaveInstanceState(outState: Bundle) {
         val current = currentFragment
-        supportFragmentManager.putFragment(outState, "current_fragment", current!!)
+        current?.let { supportFragmentManager.putFragment(outState, "current_fragment", it) }
         outState.putInt(EXTRA_TARGET, currentFragmentId)
         super.onSaveInstanceState(outState)
     }
