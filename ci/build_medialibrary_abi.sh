@@ -34,60 +34,20 @@ git config --global url."https://code.videolan.org/".insteadOf "http://code.vide
 git config --global user.name "VLC Hosted CI"
 git config --global user.email "vlc-hosted-ci@users.noreply.github.com"
 
-# VideoLAN's OCI image provides a pinned native NDK and a read-only SDK.
-# Never modify the base image or run the compiler as root. Compose a writable
-# SDK under the isolated HOME; link *unchanged* base toolchains and install
-# only missing API 36 / build-tools into writable, separate directories.
+# SDK 36 is installed on the GitHub runner by Google's official sdkmanager,
+# checked there, and bind-mounted read-only over exactly two image SDK paths.
+# Preserve the image's original NDK and native toolchain. Do not run the
+# third-party /usr/bin/sdkmanager in this image, or install anything as root.
 base_sdk="$(realpath -e "$ANDROID_SDK")"
-case "$base_sdk" in /sdk/*) ;; *) echo 'VLC_NATIVE_SDK_UNTRUSTED: expected bundled VideoLAN SDK' >&2; exit 3;; esac
-sdk="$HOME/android-sdk"
-test ! -e "$sdk" || { echo 'VLC_NATIVE_SDK_OVERLAY_ALREADY_EXISTS' >&2; exit 3; }
-mkdir -p "$sdk/platforms" "$sdk/build-tools" "$sdk/licenses"
-for entry in "$base_sdk"/*; do
-    [ -e "$entry" ] || continue
-    name="${entry##*/}"
-    case "$name" in platforms|build-tools|licenses) continue ;; esac
-    ln -s "$entry" "$sdk/$name"
-done
-if [ -d "$base_sdk/licenses" ]; then
-    cp -a "$base_sdk/licenses/." "$sdk/licenses/"
+if [ "$base_sdk" != /sdk/android-sdk-linux ]; then
+    echo 'VLC_NATIVE_SDK_PATH_MISMATCH: expected VideoLAN image SDK' >&2
+    exit 3
 fi
-for category in platforms build-tools; do
-    [ -d "$base_sdk/$category" ] || continue
-    for entry in "$base_sdk/$category"/*; do
-        [ -d "$entry" ] || continue
-        name="${entry##*/}"
-        # A partial target version must never be a read-only symlink: sdkmanager
-        # must be able to install/reinstall that version into the writable SDK.
-        if [ "$category" = platforms ] && [ "$name" = android-36 ] && [ ! -f "$entry/android.jar" ]; then
-            continue
-        fi
-        if [ "$category" = build-tools ] && [ "$name" = 36.0.0 ] && [ ! -f "$entry/aapt2" ]; then
-            continue
-        fi
-        ln -s "$entry" "$sdk/$category/$name"
-    done
-done
-sdkmanager="$(command -v sdkmanager || true)"
-if [ -z "$sdkmanager" ]; then
-    for candidate in "$base_sdk/cmdline-tools/latest/bin/sdkmanager" "$base_sdk/tools/bin/sdkmanager"; do
-        if [ -x "$candidate" ]; then sdkmanager="$candidate"; break; fi
-    done
+python3 -B ci/verify_android_sdk.py --sdk "$base_sdk"
+if [ -w "$base_sdk/platforms/android-36" ] || [ -w "$base_sdk/build-tools/36.0.0" ]; then
+    echo 'VLC_NATIVE_SDK_MOUNTS_NOT_READONLY' >&2
+    exit 3
 fi
-if [ ! -f "$sdk/platforms/android-36/android.jar" ] || [ ! -f "$sdk/build-tools/36.0.0/aapt2" ]; then
-    [ -x "$sdkmanager" ] || { echo 'VLC_NATIVE_SDKMANAGER_UNAVAILABLE' >&2; exit 3; }
-    # Bounded yes-input, propagated exit code, no shell pipefail/SIGPIPE false
-    # failures. The prebuilt source image remains immutable.
-    python3 -B - "$sdkmanager" "$sdk" <<'SDKINSTALL'
-import subprocess, sys
-cmd=[sys.argv[1], '--sdk_root='+sys.argv[2], 'platforms;android-36', 'build-tools;36.0.0']
-subprocess.run(cmd, input='y\n'*80, text=True, check=True, timeout=1200)
-SDKINSTALL
-fi
-[ -f "$sdk/platforms/android-36/android.jar" ] && [ -f "$sdk/build-tools/36.0.0/aapt2" ] && [ -w "$sdk" ] || {
-    echo 'VLC_NATIVE_SDK36_UNAVAILABLE: verified writable Android SDK is required' >&2; exit 3;
-}
-export ANDROID_SDK="$sdk" ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk"
 # The native source build does not publish an Android library. Upstream's
 # compile.sh calls `gradle wrapper` in the full multi-project build, where
 # Vanniktech publication evaluation fails before native compilation. Generate

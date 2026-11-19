@@ -80,6 +80,41 @@ jobs:
         with:
           path: ci/_cache/medialibrary/mla-${{ matrix.abi }}
           key: mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-${{ hashFiles('ci/medialibrary.py', 'ci/medialibrary.lock.json', 'ci/build_medialibrary_abi.sh', 'buildsystem/compile.sh', 'buildsystem/compile-medialibrary.sh', 'buildsystem/patches/medialibrary/*.patch', 'buildsystem/patches/libvlcpp/*.patch') }}
+      # The VideoLAN images contain the native NDK/toolchain, but their SDK is
+      # read-only. Install SDK 36 using Google's supported tools on the runner,
+      # then bind only the verified platform and build-tools into the image.
+      - uses: actions/setup-java@v4
+        if: steps.abi-cache.outputs.cache-hit != 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        if: steps.abi-cache.outputs.cache-hit != 'true'
+        with:
+          cmdline-tools-version: '12266719'
+      - name: Install and verify official runner SDK 36
+        if: steps.abi-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Android SDK path missing from official setup-android action}"
+          sdk_root="$(realpath -e "$ANDROID_HOME")"
+          # The pinned setup-android@v3 tool is version 16.0 (12266719).
+          # It may reuse a verified preinstalled `latest` or install into 16.0.
+          official_sdkmanager=''
+          for tools_dir in "$sdk_root/cmdline-tools/16.0" "$sdk_root/cmdline-tools/latest"; do
+            if [[ -x "$tools_dir/bin/sdkmanager" ]] && \
+               grep -Eq '^Pkg\.Revision[[:space:]]*=[[:space:]]*16\.0[[:space:]]*$' "$tools_dir/source.properties"; then
+              official_sdkmanager="$tools_dir/bin/sdkmanager"
+              break
+            fi
+          done
+          test -n "$official_sdkmanager" || { echo '::error::Pinned official Android SDK manager 16.0 not found'; exit 1; }
+          # Never select /usr/bin/sdkmanager from VideoLAN's container: it is
+          # a different Python implementation that ignored --sdk_root.
+          "$official_sdkmanager" --sdk_root="$sdk_root" \
+            'platforms;android-36' 'build-tools;36.0.0'
+          python3 -B ci/verify_android_sdk.py --sdk "$sdk_root"
       - name: Compile patched native library using KuchiSofts sources
         if: steps.abi-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -92,10 +127,18 @@ jobs:
           # Bind mounts retain the GitHub runner's UID/GID. The VideoLAN image's
           # default user is not guaranteed to own the checkout; run as its owner.
           # HOME is ephemeral and writable for Git config, caches and build tools.
+          sdk_root="$(realpath -e "${ANDROID_HOME:?runner SDK root unavailable}")"
+          python3 -B ci/verify_android_sdk.py --sdk "$sdk_root"
+          native_platform="$(realpath -e "$sdk_root/platforms/android-36")"
+          native_tools="$(realpath -e "$sdk_root/build-tools/36.0.0")"
+          # The NDK and all other VideoLAN builder paths remain image-owned.
+          # Use read-only SDK bind mounts instead of modifying /sdk with root.
           docker run --rm --entrypoint /bin/bash \
             --user "$(id -u):$(id -g)" \
             --env HOME=/tmp/vlc-ci-home \
             --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace" \
+            --mount "type=bind,src=$native_platform,dst=/sdk/android-sdk-linux/platforms/android-36,readonly" \
+            --mount "type=bind,src=$native_tools,dst=/sdk/android-sdk-linux/build-tools/36.0.0,readonly" \
             --workdir /workspace "$VLC_IMAGE" \
             -euo pipefail ci/build_medialibrary_abi.sh "$VLC_ABI"
           python3 -B ci/medialibrary.py collect-abi \

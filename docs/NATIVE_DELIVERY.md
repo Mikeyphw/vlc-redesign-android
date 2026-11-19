@@ -1,55 +1,38 @@
-# Native Devtool delivery for VLC Android
+# Native Devtool delivery — VLC Android
 
-All future code overlays must be immutable, source-bound and use the latest
-compatible canonical Devtool Launcher 3.2+ from `Mikeyphw/devtool` main. The
-launcher delegates scaffold, artifact validation, executable hook/testing,
-atomic apply/commit, durable delivery, push, PR and required-CI observation
-to **Devtool itself**. It does not implement a competing overlay mechanism.
+For code changes use only the latest verified compatible native Devtool
+Launcher v3.2+ on `Mikeyphw/devtool/main`. Every artifact is pinned to the
+genuine `Mikeyphw/vlc-redesign-android` fork, the named feature branch, exact
+commit/tree/preimage blobs, and the checksummed proposed payload. Devtool
+owns preflight, source-bound scaffold, native artifact/executable validation,
+atomic apply/commit, durable session, approved push and existing-PR delivery.
+The bootstrap is not a separate patching or transaction engine.
 
-This follow-up targets the existing feature branch and PR #1, not `main`.
-Source origin/branch/HEAD/tree, modified-file Git blobs, every proposed
-payload hash and runtime identity are verified before native Devtool mutation.
-Do not reset/rebase, force-push, overwrite unrelated changes or reapply after
-a successful native commit. Use the new committed native delivery session for
-subsequent `status`, `deliver`, `ci` and `report` actions.
+This consolidated hosted SDK correction is for existing PR #1 and the feature
+branch `feature/vlc-m0-m1-upstream-foundation-20261118`, starting at commit
+`beb2610a8b03a99c83f0885f094876e2f64a6229` and tree
+`65e0e1930aa59f9adf2b5114d97268e20a5d369a`. It refuses any source,
+branch, local worktree or remote ref drift. Never reset/rebase/force-push,
+merge automatically, overwrite unrelated changes, or regenerate an already
+created immutable package. On a successful apply, use the **new** durable
+session for `status`, `deliver` and `ci`; do not repeat `apply`.
 
-Native operation sets the supported non-Textual/clipboard controls:
+Terminal delivery disables Textual/full-screen hosts through supported
+Devtool controls. Never copy commands/logs automatically to the clipboard.
+Keep native stdout/stderr visible and machine receipts parseable; do not
+suppress diagnostics. All Android, Gradle, NDK, LibVLC, and MediaLibrary builds
+run on GitHub-hosted Linux, never on Termux.
 
-```sh
-DEVTOOL_EXECUTION_PRESENTATION=plain
-DEVTOOL_JOB_UI=plain
-DEVTOOL_TEXTUAL_APPLY_HOST=0
-DEVTOOL_TEXTUAL_EXECUTION_HOST=0
-```
+The previous CI run `44452089433` failed in all four ABIs while an image-local
+Python `sdkmanager` attempted to write SDK 36 into a read-only directory.
+The new workflow installs SDK 36 with Google's official tools on the runner
+and mounts the verified packages read-only into the original VideoLAN image.
+KuchiSofts' original source pins, patches, native build scripts, four ABI
+ELF/cache/packaging checks, Maven integrity and Android compile remain required.
+Existing tests were **updated** for this runtime instead of preserving obsolete
+SDK-overlay gates. New tests reject invalid runner SDK layouts and missing
+read-only mounts. See `docs/CI.md` for the current architecture and validation.
 
-The target Termux checkout only runs lightweight Python and source validation.
-**All Gradle/Android/NDK/LibVLC compilation happens in GitHub Actions.**
-A passing local hook is not hosted native build evidence, a compiled debug
-APK is not a signed release, and unsigned Android artifacts are not device
-qualification. Required-CI watching must check the exact new PR SHA and the
-committed `config/delivery-required-ci.json`, never upgrade an old receipt.
-
-See `docs/CI.md` for verified artifact cache, KuchiSofts MediaLibrary source
-pins, Maven packaging, negative gates, and explicit release limitations.
-
-## CI permission regression follow-up
-
-After source-built MediaLibrary PR commit `9b1d1850fdced8037fb61c72a76a487f5719fc55`,
-all four native jobs failed before compilation due to the VideoLAN image user
-not being able to write to the GitHub workspace bind mount. This follow-up
-changes only native runner identity, explicit workspace/home checks, tests and
-documentation. The source lock, OCI images, patch identities, native build
-commands and cache integrity policy are retained. A fresh native Devtool
-transaction must be source-pinned to that existing PR head, and create a new
-durable session. Do not reapply the already committed prior package.
-
-## Native SDK and Gradle bootstrap repair
-
-The four OCI jobs on source SHA `ead5742e73505bc7ea8292b0183d0d1955487787`
-failed during Gradle setup, before compiling MediaLibrary, because Android SDK
-36 was unavailable in a read-only image SDK and the wrapper generation
-configured unrelated Maven publishing. The consolidated follow-up changes
-only the CI native script, existing source-owned tests/contracts and docs; it
-keeps the entire upstream media and Android implementation unchanged. Use a
-new native Devtool source-bound artifact against the exact PR head, and a
-new delivery session. A committed apply must never be repeated.
+Native hook success is local/source evidence only. Hosted PR SHA and job
+statuses, upstream compatibility, signed APK/release and device acceptance
+remain separate and must never be inferred from a local pass.

@@ -25,6 +25,7 @@ class CIContracts(unittest.TestCase):
         for file, contents in source_files().items():
             self.f.write('.github/workflows/'+file,contents)
         self.f.write('config/delivery-required-ci.json', (ROOT/'config/delivery-required-ci.json').read_bytes())
+        self.f.write('ci/verify_android_sdk.py', (ROOT/'ci/verify_android_sdk.py').read_bytes())
         self.guard = mock.patch.object(wp, 'ROOT', self.f.root)
         self.lock_pins = mock.patch.object(ml,'TRUSTED_PATCH_BLOBS',self.f.lock['patches'])
         self.lock_pins.start()
@@ -154,34 +155,64 @@ class CIContracts(unittest.TestCase):
         files['vlc-pr.yml']=files['vlc-pr.yml'].replace('--user "$(id -u):$(id -g)"', '--user 0:0',1)
         with self.assertRaises(wp.ContractFailure): wp.require_workflow_contract(files)
 
-    def test_native_sdk_overlay_and_isolated_wrapper_contract(self):
+    def test_runner_sdk_and_isolated_wrapper_contract(self):
         from subprocess import run
         source=self.f.root/'ci/build_medialibrary_abi.sh'
         result=run(['bash','-n',str(source)],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
         wp.check_repository(self.f.root)
         text=source.read_text('utf-8')
-        self.assertIn('platforms;android-36',text)
+        self.assertIn('python3 -B ci/verify_android_sdk.py --sdk "$base_sdk"',text)
         self.assertIn('gradle-wrapper-bootstrap',text)
         self.assertIn('compile-medialibrary.sh -a "$ABI" --release',text)
+        self.assertNotIn('sdk="$HOME/android-sdk"',text)
         self.assertNotIn('compile.sh -a "$ABI" -t -ml --release -b',text)
 
-    def test_removing_sdk_and_wrapper_integrity_guards_is_refused(self):
+    def test_removing_runner_sdk_mounts_is_refused(self):
+        workflow=self.files()['vlc-pr.yml']
+        for token in ('android-actions/setup-android@v3',
+                      "cmdline-tools/16.0", "cmdline-tools/latest",
+                      "cmdline-tools-version: '12266719'",
+                      'Pkg\\.Revision[[:space:]]',
+                      '"$official_sdkmanager" --sdk_root="$sdk_root"',
+                      '--mount "type=bind,src=$native_platform,dst=/sdk/android-sdk-linux/platforms/android-36,readonly"',
+                      '--mount "type=bind,src=$native_tools,dst=/sdk/android-sdk-linux/build-tools/36.0.0,readonly"'):
+            with self.subTest(token=token):
+                files=self.files()
+                files['vlc-pr.yml']=workflow.replace(token,'# removed runner SDK gate',1)
+                with self.assertRaises(wp.ContractFailure):
+                    wp.require_workflow_contract(files)
+
+    def test_removing_native_readonly_guards_is_refused(self):
         script=self.f.root/'ci/build_medialibrary_abi.sh'
         original=script.read_text('utf-8')
-        for token in ('sdk="$HOME/android-sdk"',
-                      'mkdir -p "$sdk/platforms" "$sdk/build-tools" "$sdk/licenses"',
-                      'python3 -B - "$sdkmanager" "$sdk"',
-                      'export ANDROID_SDK="$sdk" ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk"',
+        for token in ('VLC_NATIVE_SDK_PATH_MISMATCH',
+                      'python3 -B ci/verify_android_sdk.py --sdk "$base_sdk"',
+                      '[ -w "$base_sdk/platforms/android-36" ]',
+                      'VLC_NATIVE_SDK_MOUNTS_NOT_READONLY',
                       'gradle --no-daemon --project-dir "$bootstrap" wrapper',
                       '--gradle-distribution-sha256-sum bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01',
                       'export GRADLE_PATH_VERSION=9.6.0',
                       './buildsystem/compile-medialibrary.sh -a "$ABI" --release'):
             self.assertIn(token,original)
-            script.write_text(original.replace(token,'# omitted preflight',1))
+            script.write_text(original.replace(token,'# removed native guard',1))
             with self.subTest(token=token),self.assertRaises(wp.ContractFailure):
                 wp.check_repository(self.f.root)
             script.write_text(original)
+
+    def test_image_local_sdk_installation_is_refused(self):
+        script=self.f.root/'ci/build_medialibrary_abi.sh'
+        original=script.read_text('utf-8')
+        script.write_text(original+'\nsdkmanager --sdk_root=/tmp/replacement "platforms;android-36"\n')
+        with self.assertRaises(wp.ContractFailure): wp.check_repository(self.f.root)
+        script.write_text(original)
+
+    def test_runner_sdk_gate_cannot_be_moved_after_compile(self):
+        files=self.files()
+        source=files['vlc-pr.yml']
+        source=source.replace('Install and verify official runner SDK 36', 'Runner install deferred',1)
+        files['vlc-pr.yml']=source
+        with self.assertRaises(wp.ContractFailure): wp.require_workflow_contract(files)
 
     def test_unrelated_gradle_publication_reintroduced_is_refused(self):
         script=self.f.root/'ci/build_medialibrary_abi.sh'

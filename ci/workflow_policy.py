@@ -89,21 +89,43 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
                      '-euo pipefail ci/build_medialibrary_abi.sh "$VLC_ABI"'):
         if required not in native_segment:
             raise ContractFailure('native container workspace identity or mount contract missing: '+required)
+    # Official Google SDK manager is used only on the hosted Ubuntu runner.
+    # Cache hits still revalidate ABI ELF/source/digests, without SDK installs.
+    for required in ('actions/setup-java@v4', 'android-actions/setup-android@v3',
+                     'Install and verify official runner SDK 36',
+                     "cmdline-tools/16.0", "cmdline-tools/latest",
+                     "cmdline-tools-version: '12266719'",
+                     'Pkg\\.Revision[[:space:]]',
+                     '"$official_sdkmanager" --sdk_root="$sdk_root"',
+                     'python3 -B ci/verify_android_sdk.py --sdk "$sdk_root"',
+                     '--mount "type=bind,src=$native_platform,dst=/sdk/android-sdk-linux/platforms/android-36,readonly"',
+                     '--mount "type=bind,src=$native_tools,dst=/sdk/android-sdk-linux/build-tools/36.0.0,readonly"'):
+        if required not in native_segment:
+            raise ContractFailure('official runner SDK / read-only OCI mount contract missing: '+required)
+    if (native_segment.index('Restore content-keyed verified ABI cache') >=
+            native_segment.index('Install and verify official runner SDK 36') or
+            native_segment.index('Install and verify official runner SDK 36') >=
+            native_segment.index('Compile patched native library using KuchiSofts sources')):
+        raise ContractFailure('runner SDK installation must follow cache check and precede native compilation')
+    setup_segment=native_segment.split('Restore content-keyed verified ABI cache',1)[1].split('Compile patched native library using KuchiSofts sources',1)[0]
+    if setup_segment.count("if: steps.abi-cache.outputs.cache-hit != 'true'") < 3:
+        raise ContractFailure('runner SDK setup must not run on a verified ABI cache hit')
+    if native_segment.count('python3 -B ci/verify_android_sdk.py --sdk "$sdk_root"') != 2:
+        raise ContractFailure('runner SDK must be verified both after install and before mount')
     native_script=(ROOT/'ci/build_medialibrary_abi.sh').read_text('utf-8')
     for required in ('stat -c %u /workspace', 'stat -c %g /workspace',
                      '[ ! -w /workspace ]', '[ ! -w /workspace/.git ]',
                      '${HOME:-}', 'mkdir -p "$HOME"', '[ ! -w "$HOME" ]'):
         if required not in native_script:
             raise ContractFailure('native script workspace permission/home guard missing: '+required)
-    # The hosted images carry a read-only SDK. Never repeat Gradle wrapper
-    # generation against the entire VLC project or change upstream publishers.
-    for required in ('sdk="$HOME/android-sdk"',
-                     'mkdir -p "$sdk/platforms" "$sdk/build-tools" "$sdk/licenses"',
-                     'cp -a "$base_sdk/licenses/." "$sdk/licenses/"',
-                     'python3 -B - "$sdkmanager" "$sdk"',
-                     "'platforms;android-36'", "'build-tools;36.0.0'",
-                     'sdk/platforms/android-36/android.jar',
-                     'export ANDROID_SDK="$sdk" ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk"',
+    # Native build uses KuchiSofts' original scripts, but must never invoke
+    # the image's incompatible Python sdkmanager (0.6.11).
+    for required in ('base_sdk="$(realpath -e "$ANDROID_SDK")"',
+                     'VLC_NATIVE_SDK_PATH_MISMATCH',
+                     'python3 -B ci/verify_android_sdk.py --sdk "$base_sdk"',
+                     '[ -w "$base_sdk/platforms/android-36" ]',
+                     '[ -w "$base_sdk/build-tools/36.0.0" ]',
+                     'VLC_NATIVE_SDK_MOUNTS_NOT_READONLY',
                      'gradle --no-daemon --project-dir "$bootstrap" wrapper',
                      '--gradle-distribution-sha256-sum bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01',
                      'distributionSha256Sum=bbaeb2fef8710818cf0e261201dab964c572f92b942812df0c3620d62a529a01',
@@ -111,7 +133,17 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
                      './buildsystem/compile.sh -a "$ABI" -t -l --release',
                      './buildsystem/compile-medialibrary.sh -a "$ABI" --release'):
         if required not in native_script:
-            raise ContractFailure('SDK overlay, checksum-pinned wrapper or native compiler guard missing: '+required)
+            raise ContractFailure('read-only SDK mount, checksum-pinned wrapper or native compiler guard missing: '+required)
+    if ('sdkmanager --sdk_root' in native_script or 'sdk="$HOME/android-sdk"' in native_script
+            or 'subprocess.run(cmd' in native_script):
+        raise ContractFailure('obsolete image-local SDK installer reintroduced')
+    sdk_verifier=ROOT/'ci/verify_android_sdk.py'
+    if not sdk_verifier.is_file() or sdk_verifier.is_symlink():
+        raise ContractFailure('SDK layout verifier missing or symlinked')
+    for required in ('AndroidVersion\\.ApiLevel','Pkg\\.Revision',
+                     'platforms/android-36/android.jar', 'build-tools/36.0.0/aapt2'):
+        if required not in sdk_verifier.read_text('utf-8'):
+            raise ContractFailure('installed SDK source/layout verifier incomplete: '+required)
     if './buildsystem/compile.sh -a "$ABI" -t -ml --release -b' in native_script:
         raise ContractFailure('native job must not execute unrelated MediaLibrary Gradle publication')
     if re.search(r'(?m)^\s*(?:chmod -R|chown|sudo |su )', native_script):
