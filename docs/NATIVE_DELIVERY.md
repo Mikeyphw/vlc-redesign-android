@@ -31,3 +31,14 @@ committed `config/delivery-required-ci.json`, never upgrade an old receipt.
 
 See `docs/CI.md` for verified artifact cache, KuchiSofts MediaLibrary source
 pins, Maven packaging, negative gates, and explicit release limitations.
+
+## CI permission regression follow-up
+
+After source-built MediaLibrary PR commit `9b1d1850fdced8037fb61c72a76a487f5719fc55`,
+all four native jobs failed before compilation due to the VideoLAN image user
+not being able to write to the GitHub workspace bind mount. This follow-up
+changes only native runner identity, explicit workspace/home checks, tests and
+documentation. The source lock, OCI images, patch identities, native build
+commands and cache integrity policy are retained. A fresh native Devtool
+transaction must be source-pinned to that existing PR head, and create a new
+durable session. Do not reapply the already committed prior package.

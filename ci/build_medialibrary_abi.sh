@@ -5,6 +5,25 @@ set -euo pipefail
 ABI="${1:-}"
 case "$ABI" in armeabi-v7a|arm64-v8a|x86|x86_64) ;; *) echo 'Invalid ABI' >&2; exit 2;; esac
 cd /workspace
+# GitHub checkouts are bind-mounted with their runner UID/GID. Refuse
+# privileged/chown-based workarounds or silent read-only native builds.
+if [ "$(id -u)" != "$(stat -c %u /workspace)" ] || [ "$(id -g)" != "$(stat -c %g /workspace)" ]; then
+    echo 'VLC_NATIVE_WORKSPACE_IDENTITY_MISMATCH: container user must match workspace owner' >&2
+    exit 3
+fi
+if [ ! -w /workspace ] || [ ! -w /workspace/.git ]; then
+    echo 'VLC_NATIVE_WORKSPACE_NOT_WRITABLE: checked-out source/metadata must be writable' >&2
+    exit 3
+fi
+if [ "${HOME:-}" != /tmp/vlc-ci-home ]; then
+    echo 'VLC_NATIVE_HOME_INVALID: expected isolated ephemeral home' >&2
+    exit 3
+fi
+mkdir -p "$HOME"
+if [ ! -w "$HOME" ]; then
+    echo 'VLC_NATIVE_HOME_NOT_WRITABLE' >&2
+    exit 3
+fi
 : "${ANDROID_SDK:?VideoLAN container lacks ANDROID_SDK}"
 : "${ANDROID_NDK:?VideoLAN container lacks ANDROID_NDK}"
 test -d "$ANDROID_SDK" && test -d "$ANDROID_NDK"

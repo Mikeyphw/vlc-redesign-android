@@ -79,6 +79,22 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
                  ':application:app:testDebugUnitTest :application:app:assembleDebug',
                  'docker pull "$VLC_IMAGE"', 'sha256:'):
         must_have(source, code, 'source-built patched Maven workflow')
+    # The checked-out repository must be writable *inside* each container.
+    # A default OCI user can differ from the host runner and break native builds.
+    native_segment = source.split('  media-native:',1)[1].split('  media-package:',1)[0]
+    for required in ('--user "$(id -u):$(id -g)"',
+                     '--env HOME=/tmp/vlc-ci-home',
+                     '--mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace"',
+                     '--workdir /workspace "$VLC_IMAGE"',
+                     '-euo pipefail ci/build_medialibrary_abi.sh "$VLC_ABI"'):
+        if required not in native_segment:
+            raise ContractFailure('native container workspace identity or mount contract missing: '+required)
+    native_script=(ROOT/'ci/build_medialibrary_abi.sh').read_text('utf-8')
+    for required in ('stat -c %u /workspace', 'stat -c %g /workspace',
+                     '[ ! -w /workspace ]', '[ ! -w /workspace/.git ]',
+                     '${HOME:-}', 'mkdir -p "$HOME"', '[ ! -w "$HOME" ]'):
+        if required not in native_script:
+            raise ContractFailure('native script workspace permission/home guard missing: '+required)
     # Only official documented VideoLAN images and four ABI outputs are accepted.
     from medialibrary import load_lock
     lock = load_lock(ROOT)

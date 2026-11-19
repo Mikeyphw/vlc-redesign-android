@@ -89,7 +89,12 @@ jobs:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
+          # Bind mounts retain the GitHub runner's UID/GID. The VideoLAN image's
+          # default user is not guaranteed to own the checkout; run as its owner.
+          # HOME is ephemeral and writable for Git config, caches and build tools.
           docker run --rm --entrypoint /bin/bash \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp/vlc-ci-home \
             --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace" \
             --workdir /workspace "$VLC_IMAGE" \
             -euo pipefail ci/build_medialibrary_abi.sh "$VLC_ABI"

@@ -109,3 +109,25 @@ The separate daily `vlc-upstream.yml` job monitors KuchiSofts main using a
 read-only Git merge simulation. This change affects only CI-owned files and
 does not change Android playback or redesign code. The video engine and
 MediaLibrary source remain upstream-owned.
+
+## Native OCI workspace permissions
+
+The first four-ABI hosted run (GitHub Actions #44443321075 on PR head
+`9b1d1850fdced8037fb61c72a76a487f5719fc55`) passed source and
+image checks, then failed at native build setup: `compile.sh` could not create
+`local.properties`, and Git could not clone `libvlcjni`, because the OCI
+container's default UID did not own the GitHub Actions bind-mounted workspace.
+
+The `media-native` job now runs the same **exact pulled VideoLAN OCI image**
+under the checked-out GitHub runner UID/GID (`docker run --user`). An isolated
+`HOME=/tmp/vlc-ci-home` supplies a writable location for Git's global config
+and build caches. `ci/build_medialibrary_abi.sh` checks the effective UID/GID
+against the workspace owner, validates `.git` writability and the isolated home
+**before** any native compilation. No `chmod -R`, root execution, host-level
+ownership modification, or source patch changes are used to bypass this gate.
+The compiler, pinned source/patches and post-build ELF/cache integrity checks
+remain unchanged.
+
+These changes address the **observed permission failure only**. A later native
+compile, Maven repack or Android Gradle failure must be evaluated from its
+actual hosted logs. Local regression tests cannot prove that all four ABIs build.

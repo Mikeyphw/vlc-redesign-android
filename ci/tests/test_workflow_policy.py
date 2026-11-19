@@ -122,6 +122,38 @@ class CIContracts(unittest.TestCase):
         files=self.files();files['vlc-pr.yml']=files['vlc-pr.yml'].replace('docker pull "$VLC_IMAGE"','echo no-container-pull')
         with self.assertRaises(wp.ContractFailure):wp.require_workflow_contract(files)
 
+    def test_docker_execution_uses_runner_uid_gid_and_isolated_home(self):
+        source=self.files()['vlc-pr.yml']
+        self.assertIn('--user "$(id -u):$(id -g)"', source)
+        self.assertIn('--env HOME=/tmp/vlc-ci-home', source)
+        self.assertIn('--mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace"', source)
+
+    def test_removing_container_user_or_home_breaks_native_contract(self):
+        for required in ('--user "$(id -u):$(id -g)"', '--env HOME=/tmp/vlc-ci-home',
+                         '--mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace"'):
+            files=self.files()
+            self.assertIn(required,files['vlc-pr.yml'])
+            files['vlc-pr.yml']=files['vlc-pr.yml'].replace(required, '# identity removed',1)
+            with self.subTest(required=required),self.assertRaises(wp.ContractFailure):
+                wp.require_workflow_contract(files)
+
+    def test_native_workspace_guards_are_required(self):
+        script=self.f.root/'ci/build_medialibrary_abi.sh'
+        original=script.read_text('utf-8')
+        for required in ('stat -c %u /workspace', 'stat -c %g /workspace',
+                         '[ ! -w /workspace ]', '[ ! -w /workspace/.git ]',
+                         'mkdir -p "$HOME"', '[ ! -w "$HOME" ]'):
+            self.assertIn(required,original)
+            script.write_text(original.replace(required, '# denied guard removed',1))
+            with self.subTest(required=required),self.assertRaises(wp.ContractFailure):
+                wp.check_repository(self.f.root)
+            script.write_text(original)
+
+    def test_wrong_default_oci_user_without_workspace_uid_refused(self):
+        files=self.files()
+        files['vlc-pr.yml']=files['vlc-pr.yml'].replace('--user "$(id -u):$(id -g)"', '--user 0:0',1)
+        with self.assertRaises(wp.ContractFailure): wp.require_workflow_contract(files)
+
     def test_no_hidden_static_only_or_skipped_checks(self):
         files=self.files();files['vlc-pr.yml']+='\n      - name: Inert\n        if: false\n'
         with self.assertRaises(wp.ContractFailure):wp.require_workflow_contract(files)
