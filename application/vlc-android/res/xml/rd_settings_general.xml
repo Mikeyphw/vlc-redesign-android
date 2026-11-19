@@ -21,6 +21,12 @@
             android:title="@string/rd_theme"
             android:entries="@array/rd_theme_entries"
             android:entryValues="@array/rd_theme_values" />
+        <!-- Optional AMOLED background, without changing app_theme or existing accent preference keys. -->
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="rd_amoled"
+            android:title="@string/rd_amoled_title"
+            android:summary="@string/rd_amoled_summary" />
         <!-- VLC Redesign: the desktop's Follow the system accent color (Android 12 and later: Material You) -->
         <CheckBoxPreference
             android:defaultValue="false"

@@ -1237,6 +1237,7 @@ fun BaseActivity.applyTheme() {
         }
     }
     AppCompatDelegate.setDefaultNightMode(Integer.valueOf(string!!))
+    applyRdAmoledTheme(this, string)
     applyAccent()
 }
 

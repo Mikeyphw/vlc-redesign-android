@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Opt-in overlay selected only in dark phone/tablet mode, never default dark or TV. -->
+<resources>
+    <color name="rd_amoled_black">#FF000000</color>
+    <color name="rd_amoled_panel">#FF090909</color>
+    <color name="rd_amoled_highlight">#FF1F1F1F</color>
+    <style name="ThemeOverlay.Redesign.Amoled" parent="">
+        <item name="android:windowBackground">@color/rd_amoled_black</item>
+        <item name="android:colorBackground">@color/rd_amoled_black</item>
+        <item name="colorPrimaryDark">@color/rd_amoled_black</item>
+        <item name="colorSurface">@color/rd_amoled_panel</item>
+        <item name="background_default">@color/rd_amoled_black</item>
+        <item name="background_actionbar">@color/rd_amoled_black</item>
+        <item name="header_background">@color/rd_amoled_black</item>
+        <item name="audio_header_background">@color/rd_amoled_black</item>
+        <item name="card_background">@color/rd_amoled_black</item>
+        <item name="empty_background">@color/rd_amoled_black</item>
+        <item name="background_default_darker">@color/rd_amoled_panel</item>
+        <item name="bottom_sheet_background">@color/rd_amoled_panel</item>
+        <item name="rd_well">@color/rd_amoled_black</item>
+        <item name="rd_panel">@color/rd_amoled_panel</item>
+        <item name="rd_topbar">@color/rd_amoled_black</item>
+        <item name="rd_hover">@color/rd_amoled_highlight</item>
+    </style>
+</resources>
