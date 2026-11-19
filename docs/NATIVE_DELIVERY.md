@@ -36,3 +36,14 @@ read-only mounts. See `docs/CI.md` for the current architecture and validation.
 Native hook success is local/source evidence only. Hosted PR SHA and job
 statuses, upstream compatibility, signed APK/release and device acceptance
 remain separate and must never be inferred from a local pass.
+
+## SDK tools-package qualification follow-up
+
+The previous native delivery committed at
+`dba308c44495d8dc278bebeb23b4e3059ecff65d`; its hosted run
+`44456258948` failed because `setup-android@v3` attempted to install the
+retired `tools` SDK package. This new follow-up retains the existing
+`config/delivery-required-ci.json` and all previous source/ABI/Maven tests,
+while setting an explicit current package list in both Android setup actions.
+The historical failed session is not upgraded. Rebuild a fresh native
+source-bound artifact on the exact current PR head and qualify its new CI run.

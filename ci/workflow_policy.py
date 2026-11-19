@@ -79,6 +79,24 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
                  ':application:app:testDebugUnitTest :application:app:assembleDebug',
                  'docker pull "$VLC_IMAGE"', 'sha256:'):
         must_have(source, code, 'source-built patched Maven workflow')
+    # setup-android@v3 defaults to `tools platform-tools`. Google removed
+    # the legacy `tools` package: the action aborts before our SDK 36 step.
+    # Both the native matrix and downstream Android job must override it,
+    # and keep the pinned official command-line manager revision.
+    actions=list(re.finditer(r'(?m)^      - uses: android-actions/setup-android@v3\s*$', source))
+    if len(actions) != 2:
+        raise ContractFailure('expected exactly two official setup-android action instances')
+    for index, matched in enumerate(actions, 1):
+        following=source[matched.end():]
+        next_step=re.search(r'(?m)^      - (?:uses:|name:) ', following)
+        segment=following[:next_step.start()] if next_step else following
+        if not re.search(r"(?m)^          cmdline-tools-version: ['\"]12266719['\"]\s*$",segment):
+            raise ContractFailure(f'setup-android instance {index} must pin official tools revision')
+        package_lines=re.findall(r'(?m)^          packages: ([^\n#]+)$',segment)
+        if len(package_lines)!=1 or package_lines[0].strip().strip("'\"")!='platform-tools':
+            raise ContractFailure(f'setup-android instance {index} must select only platform-tools')
+        if re.search(r"(?m)^          packages:.*(?:^|[ ,])tools(?:[ ,]|$)",segment):
+            raise ContractFailure(f'setup-android instance {index} reintroduced retired tools package')
     # The checked-out repository must be writable *inside* each container.
     # A default OCI user can differ from the host runner and break native builds.
     native_segment = source.split('  media-native:',1)[1].split('  media-package:',1)[0]

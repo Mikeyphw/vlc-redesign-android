@@ -92,6 +92,8 @@ jobs:
         if: steps.abi-cache.outputs.cache-hit != 'true'
         with:
           cmdline-tools-version: '12266719'
+          # The action's default includes the retired Android SDK 'tools' package.
+          packages: platform-tools
       - name: Install and verify official runner SDK 36
         if: steps.abi-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -249,6 +251,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '12266719'
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'

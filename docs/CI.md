@@ -98,3 +98,18 @@ The actual four-ABI build, patched Maven archive, Android Gradle test/build,
 PR HEAD checks, and Devtool required-CI qualification must pass on GitHub.
 `main` branch protection and any approved signed release are independent
 acceptance requirements; no release or device qualification is claimed here.
+
+## Hosted SDK package correction (19 November 2026)
+
+The source-bound PR run [44456258948](https://github.com/Mikeyphw/vlc-redesign-android/actions/runs/44456258948)
+passed Native source contracts but all four native jobs failed in
+`android-actions/setup-android@v3` before the explicit SDK 36 installer.
+The action's default package list `tools platform-tools` requests the retired
+Android SDK `tools` package, which Google's repository no longer provides.
+Both setup-android invocations now explicitly select only `platform-tools`
+with the independently reviewed `12266719` command-line-tools revision.
+The existing following steps still install and inspect platform 36 and Build
+Tools 36.0.0; the Android job still provisions NDK 21.4.7075529.
+Current workflow negative tests reject any missing, unpinned, or obsolete
+setup-android package configuration, and source/ABI/cache/Maven/Gradle gates
+remain required. This does not establish a hosted build pass.

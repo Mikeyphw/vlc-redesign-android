@@ -168,6 +168,52 @@ class CIContracts(unittest.TestCase):
         self.assertNotIn('sdk="$HOME/android-sdk"',text)
         self.assertNotIn('compile.sh -a "$ABI" -t -ml --release -b',text)
 
+    def test_setup_android_both_jobs_exclude_deprecated_tools(self):
+        source=self.files()['vlc-pr.yml']
+        self.assertEqual(source.count('      - uses: android-actions/setup-android@v3'),2)
+        self.assertEqual(source.count('          packages: platform-tools'),2)
+        wp.require_workflow_contract(self.files())
+
+    def test_setup_android_default_package_regression_refused(self):
+        original=self.files()['vlc-pr.yml']
+        for occurrence in (1,2):
+            with self.subTest(instance=occurrence):
+                text=original
+                token='          packages: platform-tools'
+                before,separator,after=text.partition(token)
+                self.assertTrue(separator)
+                if occurrence==1:
+                    text=before+after
+                else:
+                    self.assertIn(token,after)
+                    text=before+separator+after.replace(token,'',1)
+                files=self.files();files['vlc-pr.yml']=text
+                with self.assertRaises(wp.ContractFailure):
+                    wp.require_workflow_contract(files)
+
+    def test_setup_android_duplicate_packages_refused(self):
+        files=self.files()
+        files['vlc-pr.yml']=files['vlc-pr.yml'].replace(
+            '          packages: platform-tools',
+            '          packages: platform-tools\n          packages: tools',1)
+        with self.assertRaises(wp.ContractFailure):
+            wp.require_workflow_contract(files)
+
+    def test_setup_android_obsolete_or_unpinned_tools_refused(self):
+        for change in ('packages: tools platform-tools',
+                       'packages: tools',
+                       'packages: platform-tools tools',
+                       'packages: unknown-package'):
+            files=self.files()
+            files['vlc-pr.yml']=files['vlc-pr.yml'].replace('packages: platform-tools',change,1)
+            with self.subTest(change=change),self.assertRaises(wp.ContractFailure):
+                wp.require_workflow_contract(files)
+        files=self.files()
+        files['vlc-pr.yml']=files['vlc-pr.yml'].replace(
+            "cmdline-tools-version: '12266719'", "cmdline-tools-version: '11479570'",1)
+        with self.assertRaises(wp.ContractFailure):
+            wp.require_workflow_contract(files)
+
     def test_removing_runner_sdk_mounts_is_refused(self):
         workflow=self.files()['vlc-pr.yml']
         for token in ('android-actions/setup-android@v3',
