@@ -1,0 +1,48 @@
+name: VLC upstream mergeability (read-only)
+
+on:
+  schedule:
+    - cron: '37 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vlc-upstream-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  merge-simulation:
+    name: KuchiSofts main merge simulation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Fetch exact direct-upstream main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/KuchiSofts/vlc-redesign-android.git
+          git fetch --no-tags upstream '+refs/heads/main:refs/remotes/upstream/main'
+          echo "FORK_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "UPSTREAM_SHA=$(git rev-parse refs/remotes/upstream/main)" >> "$GITHUB_ENV"
+      - name: Verify shared ancestry and simulate merge without checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B ci/upstream_merge.py \
+            --expected-fork-sha "$FORK_SHA" \
+            --expected-upstream-sha "$UPSTREAM_SHA" \
+            --output ci/_reports/upstream-merge.json
+      - name: Archive exact decision (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-merge-${{ github.sha }}
+          path: ci/_reports/upstream-merge.json
+          if-no-files-found: warn
+          retention-days: 14

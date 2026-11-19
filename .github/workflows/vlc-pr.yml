@@ -1,0 +1,373 @@
+name: VLC Android PR qualification
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vlc-android-pr-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-contracts:
+    name: Native source contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Positive and adversarial upstream/source/CI tests
+        run: python3 -B -m unittest discover -s ci/tests -p 'test_*.py' -v
+      - name: Provenance, licensing and exact source-lock preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s COPYING
+          test -s UPSTREAM.md
+          test -s docs/ARCHITECTURE.md
+          test -s application/vlc-android/src/org/videolan/vlc/gui/MainActivity.kt
+          python3 -B ci/workflow_policy.py
+          python3 -B ci/medialibrary.py source
+
+  media-native:
+    name: Patched MediaLibrary native (${{ matrix.abi }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 210
+    needs: source-contracts
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: armeabi-v7a
+            image: registry.videolan.org/vlc-debian-android-3.0:20260701183656
+          - abi: arm64-v8a
+            image: registry.videolan.org/vlc-debian-android:20260611225331
+          - abi: x86
+            image: registry.videolan.org/vlc-debian-android-3.0:20260701183656
+          - abi: x86_64
+            image: registry.videolan.org/vlc-debian-android:20260611225331
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify source and pinned patch blobs
+        run: python3 -B ci/medialibrary.py source
+      - name: Resolve actual VideoLAN OCI image digest
+        id: image
+        shell: bash
+        env:
+          VLC_IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          docker pull "$VLC_IMAGE"
+          image_digest="$(docker image inspect "$VLC_IMAGE" --format '{{index .RepoDigests 0}}')"
+          if [[ "$image_digest" != registry.videolan.org/*@sha256:* ]]; then
+            echo '::error::Source image is not a digest-pinned VideoLAN image'; exit 1
+          fi
+          printf 'digest=%s\n' "$image_digest" >> "$GITHUB_OUTPUT"
+          printf 'digest_hex=%s\n' "${image_digest##*@sha256:}" >> "$GITHUB_OUTPUT"
+      - name: Restore content-keyed verified ABI cache
+        uses: actions/cache/restore@v4
+        id: abi-cache
+        with:
+          path: ci/_cache/medialibrary/mla-${{ matrix.abi }}
+          key: mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-${{ hashFiles('ci/medialibrary.lock.json', 'ci/build_medialibrary_abi.sh', 'ci/verify_android_sdk.py', 'buildsystem/compile.sh', 'buildsystem/compile-medialibrary.sh', 'buildsystem/patches/medialibrary/*.patch', 'buildsystem/patches/libvlcpp/*.patch') }}
+          restore-keys: |
+            mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-
+      # A prefix hit may have been created by an older packaging implementation.
+      # The native source lock, OCI digest, patch identity and ELF bytes still
+      # have to match; a stale/tampered cache must fail, never silently pass.
+      - name: Qualify restored ABI before deciding whether to compile
+        id: abi-reuse
+        shell: bash
+        env:
+          VLC_ABI: ${{ matrix.abi }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          native_dir="ci/_cache/medialibrary/mla-$VLC_ABI"
+          if [[ -e "$native_dir" ]]; then
+            # A prefix hit can belong to an earlier source/patch lock.
+            # Legitimate input drift recompiles; corruption under the *same*
+            # source identity must fail, not be accepted as a cache hit.
+            expected="$(python3 -B ci/medialibrary.py source | python3 -c 'import json,sys;print(json.load(sys.stdin)["inputs_sha256"])')"
+            recorded="$(python3 -B - "$native_dir/receipt.json" <<'RECEIPT'
+          import json,sys
+          from pathlib import Path
+          p=Path(sys.argv[1])
+          if not p.is_file() or p.is_symlink(): raise SystemExit('missing/symlinked ABI cache receipt')
+          s=json.loads(p.read_text('utf-8'))
+          v=s.get('inputs_sha256')
+          if not isinstance(v,str) or len(v)!=64: raise SystemExit('malformed ABI cache receipt')
+          print(v)
+          RECEIPT
+            )"
+            if [[ "$recorded" != "$expected" ]]; then
+              if [[ '${{ steps.abi-cache.outputs.cache-hit }}' == 'true' ]]; then
+                echo '::error::Exact native cache key has inconsistent source lock'; exit 1
+              fi
+              echo 'Old native source lock: rebuilding with current upstream patch/input pins'
+              rm -r -- "$native_dir"
+              echo 'reuse=false' >> "$GITHUB_OUTPUT"
+            else
+              python3 -B ci/medialibrary.py verify-abi --abi "$VLC_ABI" --image-digest "$IMAGE_DIGEST"
+              echo 'reuse=true' >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo 'reuse=false' >> "$GITHUB_OUTPUT"
+          fi
+      # The VideoLAN images contain the native NDK/toolchain, but their SDK is
+      # read-only. Install SDK 36 using Google's supported tools on the runner,
+      # then bind only the verified platform and build-tools into the image.
+      - uses: actions/setup-java@v4
+        if: steps.abi-reuse.outputs.reuse != 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        if: steps.abi-reuse.outputs.reuse != 'true'
+        with:
+          cmdline-tools-version: '12266719'
+          # The action's default includes the retired Android SDK 'tools' package.
+          packages: platform-tools
+      - name: Install and verify official runner SDK 36
+        if: steps.abi-reuse.outputs.reuse != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Android SDK path missing from official setup-android action}"
+          sdk_root="$(realpath -e "$ANDROID_HOME")"
+          # The pinned setup-android@v3 tool is version 16.0 (12266719).
+          # It may reuse a verified preinstalled `latest` or install into 16.0.
+          official_sdkmanager=''
+          for tools_dir in "$sdk_root/cmdline-tools/16.0" "$sdk_root/cmdline-tools/latest"; do
+            if [[ -x "$tools_dir/bin/sdkmanager" ]] && \
+               grep -Eq '^Pkg\.Revision[[:space:]]*=[[:space:]]*16\.0[[:space:]]*$' "$tools_dir/source.properties"; then
+              official_sdkmanager="$tools_dir/bin/sdkmanager"
+              break
+            fi
+          done
+          test -n "$official_sdkmanager" || { echo '::error::Pinned official Android SDK manager 16.0 not found'; exit 1; }
+          # Never select /usr/bin/sdkmanager from VideoLAN's container: it is
+          # a different Python implementation that ignored --sdk_root.
+          "$official_sdkmanager" --sdk_root="$sdk_root" \
+            'platforms;android-36' 'build-tools;36.0.0'
+          python3 -B ci/verify_android_sdk.py --sdk "$sdk_root"
+      - name: Compile patched native library using KuchiSofts sources
+        if: steps.abi-reuse.outputs.reuse != 'true'
+        shell: bash
+        env:
+          VLC_IMAGE: ${{ matrix.image }}
+          VLC_ABI: ${{ matrix.abi }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # Bind mounts retain the GitHub runner's UID/GID. The VideoLAN image's
+          # default user is not guaranteed to own the checkout; run as its owner.
+          # HOME is ephemeral and writable for Git config, caches and build tools.
+          sdk_root="$(realpath -e "${ANDROID_HOME:?runner SDK root unavailable}")"
+          python3 -B ci/verify_android_sdk.py --sdk "$sdk_root"
+          native_platform="$(realpath -e "$sdk_root/platforms/android-36")"
+          native_tools="$(realpath -e "$sdk_root/build-tools/36.0.0")"
+          # The NDK and all other VideoLAN builder paths remain image-owned.
+          # Use read-only SDK bind mounts instead of modifying /sdk with root.
+          docker run --rm --entrypoint /bin/bash \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp/vlc-ci-home \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace" \
+            --mount "type=bind,src=$native_platform,dst=/sdk/android-sdk-linux/platforms/android-36,readonly" \
+            --mount "type=bind,src=$native_tools,dst=/sdk/android-sdk-linux/build-tools/36.0.0,readonly" \
+            --workdir /workspace "$VLC_IMAGE" \
+            -euo pipefail ci/build_medialibrary_abi.sh "$VLC_ABI"
+          python3 -B ci/medialibrary.py collect-abi \
+            --abi "$VLC_ABI" --image-digest "$IMAGE_DIGEST" \
+            --native "medialibrary/jni/libs/$VLC_ABI/libmla.so"
+      - name: Verify ABI source, OCI digest and ELF (including cache hits)
+        shell: bash
+        env:
+          VLC_ABI: ${{ matrix.abi }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          python3 -B ci/medialibrary.py verify-abi --abi "$VLC_ABI" --image-digest "$IMAGE_DIGEST"
+      - name: Cache verified native ABI for subsequent runs
+        if: steps.abi-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ci/_cache/medialibrary/mla-${{ matrix.abi }}
+          key: mla-v1-${{ matrix.abi }}-${{ steps.image.outputs.digest_hex }}-${{ hashFiles('ci/medialibrary.lock.json', 'ci/build_medialibrary_abi.sh', 'ci/verify_android_sdk.py', 'buildsystem/compile.sh', 'buildsystem/compile-medialibrary.sh', 'buildsystem/patches/medialibrary/*.patch', 'buildsystem/patches/libvlcpp/*.patch') }}
+      - name: Pass independently verified native library to assembler
+        uses: actions/upload-artifact@v4
+        with:
+          name: mla-${{ matrix.abi }}
+          path: ci/_cache/medialibrary/mla-${{ matrix.abi }}/
+          if-no-files-found: error
+          retention-days: 2
+
+  media-package:
+    name: Verified patched Maven AAR (four ABIs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: media-native
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download four source-bound ABI libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mla-*
+          merge-multiple: false
+          path: ci/_cache/medialibrary
+      - name: Verify native artifacts, fetch checksum-verified official Java AAR/POM
+        shell: bash
+        run: |
+          set -euo pipefail
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            python3 -B ci/medialibrary.py verify-abi --abi "$abi"
+          done
+          python3 -B ci/medialibrary.py fetch-official
+      - name: Derive Maven cache key from upstream AAR and verified native receipts
+        id: package-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          key="$(python3 -B ci/medialibrary.py cache-key | python3 -c 'import json,sys; print(json.load(sys.stdin)["cache_key"])')"
+          printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
+      - name: Restore exact verified Maven AAR cache
+        uses: actions/cache/restore@v4
+        id: package-cache
+        with:
+          path: ci/_maven/repository
+          key: ${{ steps.package-key.outputs.key }}
+      - name: Assemble patched Maven AAR from verified upstream components
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        run: python3 -B ci/medialibrary.py package
+      - name: Verify cached/new Maven AAR, POM and every patched native ABI
+        run: python3 -B ci/medialibrary.py verify-maven
+      - name: Cache exact verified local Maven repository
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ci/_maven/repository
+          key: ${{ steps.package-key.outputs.key }}
+      - name: Deliver patched Maven artifact to Android job
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-medialibrary-maven
+          path: ci/_maven/repository/
+          if-no-files-found: error
+          retention-days: 2
+
+  android-debug:
+    name: Android hosted debug APK + JVM tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: [source-contracts, media-package]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-medialibrary-maven
+          path: ci/_maven/repository
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mla-*
+          merge-multiple: false
+          path: ci/_cache/medialibrary
+      - name: Reject missing/tampered local patched MediaLibrary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B ci/medialibrary.py verify-maven
+          test -s ci/_maven/repository/org/videolan/android/medialibrary-all/0.13.24-rd1/medialibrary-all-0.13.24-rd1.aar
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '12266719'
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Install required Android SDK packages (hosted only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;21.4.7075529'
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+      - name: Reconstruct exact upstream LibVLCJNI Gradle project (no native rebuild)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B ci/medialibrary.py source
+          python3 -B ci/prepare_android_gradle.py prepare
+      - name: Derive APK cache key from all non-CI tracked build inputs
+        id: apk-key
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ImageVersion:?GitHub runner image version unavailable}"
+          key="$(python3 -B ci/apk_reuse.py key --runner-image "$ImageVersion" | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')"
+          printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
+      - name: Restore exact verified debug APK cache
+        id: apk-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ci/_cache/debug-apk
+          key: ${{ steps.apk-key.outputs.key }}
+      - name: Validate cached APK before bypassing assembly
+        if: steps.apk-cache.outputs.cache-hit == 'true'
+        shell: bash
+        run: python3 -B ci/apk_reuse.py verify --runner-image "$ImageVersion"
+      - name: Run JVM unit tests against current source (never cached)
+        shell: bash
+        env:
+          RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
+        run: |
+          set -euo pipefail
+          python3 -B ci/medialibrary.py verify-maven
+          python3 -B ci/prepare_android_gradle.py verify
+          bash ci/gradle_dependency_retry.sh test
+      - name: Assemble Android debug APK only if inputs changed
+        if: steps.apk-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
+        run: |
+          set -euo pipefail
+          python3 -B ci/prepare_android_gradle.py verify
+          bash ci/gradle_dependency_retry.sh assemble
+      - name: Qualify unchanged or newly built APK and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ '${{ steps.apk-cache.outputs.cache-hit }}' != 'true' ]]; then
+            python3 -B ci/apk_reuse.py seal --runner-image "$ImageVersion"
+          fi
+          python3 -B ci/apk_reuse.py verify --runner-image "$ImageVersion"
+      - name: Cache verified debug APK for identical source/toolchain inputs
+        if: steps.apk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ci/_cache/debug-apk
+          key: ${{ steps.apk-key.outputs.key }}
+      - name: Upload unsigned debug APKs for inspection
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlc-android-debug-${{ github.sha }}
+          path: ci/_cache/debug-apk/*.apk
+          if-no-files-found: error
+          retention-days: 7
