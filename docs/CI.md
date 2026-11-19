@@ -160,3 +160,31 @@ APK cache exists yet. Subsequent CI/docs-only commits can reuse that debug APK
 when the tracked build inputs, patched AAR, runner image and toolchain match.
 Unpinned external dependency resolution remains a separate release-qualification
 risk and is not represented as reproducible byte-for-byte compilation.
+
+## Hosted Gradle source bootstrap after incremental cache success (19 November 2026)
+
+The first incremental hosted run
+[44527779747](https://github.com/Mikeyphw/vlc-redesign-android/actions/runs/44527779747)
+passed source contracts, **all four cached and independently validated native
+ELFs**, and the complete patched Maven AAR packaging/verification. The Android
+JVM job then failed at configuration: root `settings.gradle` includes the
+`:libvlcjni:libvlc` project, but the app checkout lacked `libvlcjni/libvlc`.
+This is an external source-project prerequisite, **not a reason to rebuild
+LibVLC, MediaLibrary or the cached AAR**.
+
+The Android job now uses `ci/prepare_android_gradle.py` before its cache-key,
+JVM and APK stages. It clones exactly KuchiSofts' tested
+`https://code.videolan.org/videolan/libvlcjni.git` `libvlcjni-3.x` branch,
+checks out the **exact source-lock commit**
+`0b8dc65efb203c86a0476bc337ddd99ecf1c0ef6` on detached HEAD, and
+verifies origin, Git root, commit, tracked cleanliness, actual
+`libvlcjni/libvlc/build.gradle`, and the existing root MediaLibrary Gradle
+project. The source lock is cross-checked with the untouched upstream
+`buildsystem/compile.sh`. No placeholder projects, native compilation,
+reset/rebase/force-push, or SDK permission hacks are introduced. Current JVM
+tests remain mandatory and cache hits may skip only identical APK assembly.
+
+Source and workflow contract tests include negative cases for wrong remote or
+commit, symlinked/fake directories, dirty tracked source, omitted preparation,
+removed verification, and broken source-lock agreement. Hosted Gradle/API
+acceptance and the first verified debug APK **are still pending**.

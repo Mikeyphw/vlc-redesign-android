@@ -65,3 +65,18 @@ verification; JVM tests cannot be skipped by an APK cache. The new Devtool
 launcher requires source/origin/HEAD/tree/preimage/blob/payload verification,
 native executable tests and the actual current hosted CI. A failed hosted job
 is not a pass; resume the new durable session instead of reapplying.
+
+## Incremental Android Gradle checkout correction
+
+After incremental delivery HEAD `bd817867230ef8119d98e0db8582b431e44754fd`,
+run `44527779747` successfully reused and verified all four native ELF
+caches and the patched Maven AAR, but failed before JVM tests because the
+external `:libvlcjni:libvlc` project was absent from the clean runner
+checkout. This consolidated follow-up adds a source-locked, verified
+LibVLCJNI-only checkout before Android Gradle; source-lock negative tests,
+workflow gates and documentation are updated rather than bypassed. It does
+not invalidate otherwise verified native/Maven caches or claim a completed
+APK. New Devtool delivery must bind the actual target origin, named feature
+branch, starting HEAD/tree/blobs, current approved launcher runtime and exact
+payload. The prior committed native session is historical; resume the newly
+created session after commit rather than reapply.

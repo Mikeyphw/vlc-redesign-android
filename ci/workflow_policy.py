@@ -223,6 +223,37 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
             android.index('Qualify unchanged or newly built APK and checksums') <
             android.index('Upload unsigned debug APKs')):
         raise ContractFailure('APK source/cache/unit-test/build verification order unsafe')
+    # A clean GitHub checkout does not contain the external LibVLCJNI Gradle
+    # project required by root settings.gradle. Rebuild only the pinned source
+    # checkout, not native artifacts, before Gradle JVM tests or APK assembly.
+    prepare_name = 'Reconstruct exact upstream LibVLCJNI Gradle project (no native rebuild)'
+    if android.count(prepare_name) != 1 or android.count('ci/prepare_android_gradle.py prepare') != 1:
+        raise ContractFailure('exact LibVLCJNI source preparation step missing or duplicated')
+    if android.count('ci/prepare_android_gradle.py verify') != 2:
+        raise ContractFailure('LibVLCJNI source provenance not verified before JVM tests and APK assembly')
+    if not (android.index('Install required Android SDK packages (hosted only)') <
+            android.index(prepare_name) <
+            android.index('Derive APK cache key') <
+            android.index('Run JVM unit tests against current source') <
+            android.index('Assemble Android debug APK only if inputs changed')):
+        raise ContractFailure('LibVLCJNI checkout must precede all Gradle configuration and APK reuse')
+    jvm_block = android.split('Run JVM unit tests against current source (never cached)', 1)[1].split('Assemble Android debug APK only if inputs changed', 1)[0]
+    build_block = android.split('Assemble Android debug APK only if inputs changed', 1)[1].split('Qualify unchanged or newly built APK and checksums', 1)[0]
+    for block in (jvm_block, build_block):
+        if 'python3 -B ci/prepare_android_gradle.py verify' not in block or block.index('ci/prepare_android_gradle.py verify') > block.index('gradle --no-daemon'):
+            raise ContractFailure('Gradle invoked without source-locked LibVLCJNI project verification')
+    prep = ROOT / 'ci/prepare_android_gradle.py'
+    if not prep.is_file() or prep.is_symlink():
+        raise ContractFailure('source-bound LibVLCJNI checkout verifier missing or symlinked')
+    prep_text = prep.read_text('utf-8')
+    for required in ("SOURCE_URL = 'https://code.videolan.org/videolan/libvlcjni.git'",
+                     "SOURCE_BRANCH = 'libvlcjni-3.x'", 'load_lock(root)',
+                     "'--detach', pin", "'rev-parse', 'HEAD'", "'remote', 'get-url', 'origin'",
+                     "'libvlc/build.gradle'", "'status', '--porcelain=v1', '--untracked-files=no'"):
+        if required not in prep_text:
+            raise ContractFailure('LibVLCJNI upstream provenance/source integrity guard missing: '+required)
+    if "subprocess.run(['git', 'clone'" not in prep_text:
+        raise ContractFailure('LibVLCJNI must be a real upstream Git checkout, not a stub')
     apk_gate = ROOT / 'ci/apk_reuse.py'
     if not apk_gate.is_file() or apk_gate.is_symlink():
         raise ContractFailure('source-owned APK provenance validator missing')

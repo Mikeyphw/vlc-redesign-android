@@ -27,6 +27,7 @@ class CIContracts(unittest.TestCase):
         self.f.write('config/delivery-required-ci.json', (ROOT/'config/delivery-required-ci.json').read_bytes())
         self.f.write('ci/verify_android_sdk.py', (ROOT/'ci/verify_android_sdk.py').read_bytes())
         self.f.write('ci/apk_reuse.py', (ROOT/'ci/apk_reuse.py').read_bytes())
+        self.f.write('ci/prepare_android_gradle.py', (ROOT/'ci/prepare_android_gradle.py').read_bytes())
         self.guard = mock.patch.object(wp, 'ROOT', self.f.root)
         self.lock_pins = mock.patch.object(ml,'TRUSTED_PATCH_BLOBS',self.f.lock['patches'])
         self.lock_pins.start()
@@ -44,6 +45,32 @@ class CIContracts(unittest.TestCase):
         wp.require_workflow_contract(self.files())
         wp.require_policy(json.loads((ROOT/'config/delivery-required-ci.json').read_text()))
         wp.check_repository(self.f.root)
+
+    def test_android_gradle_source_precedes_cache_tests_and_assembly(self):
+        source=self.files()['vlc-pr.yml']
+        self.assertIn('ci/prepare_android_gradle.py prepare',source)
+        self.assertEqual(source.count('ci/prepare_android_gradle.py verify'),2)
+        wp.require_workflow_contract(self.files())
+
+    def test_gradle_source_checkout_gate_cannot_be_skipped(self):
+        for old,new in (('ci/prepare_android_gradle.py prepare','echo prepare-skipped'),
+                        ('ci/prepare_android_gradle.py verify','echo verify-skipped'),
+                        ('Reconstruct exact upstream LibVLCJNI Gradle project (no native rebuild)',
+                         'Unverified Gradle setup')):
+            files=self.files();files['vlc-pr.yml']=files['vlc-pr.yml'].replace(old,new,1)
+            with self.subTest(old=old), self.assertRaises(wp.ContractFailure):
+                wp.require_workflow_contract(files)
+
+    def test_missing_or_modified_source_bootstrap_refused(self):
+        path=self.f.root/'ci/prepare_android_gradle.py'
+        original=path.read_text('utf-8')
+        for old in ('https://code.videolan.org/videolan/libvlcjni.git',
+                    "'--detach', pin", "'remote', 'get-url', 'origin'"):
+            path.write_text(original.replace(old, 'UNTRUSTED', 1))
+            with self.subTest(old=old),self.assertRaises(wp.ContractFailure):
+                wp.check_repository(self.f.root)
+        path.unlink()
+        with self.assertRaises(wp.ContractFailure):wp.check_repository(self.f.root)
 
     def test_guard_never_matches_itself(self):
         source = self.files()['vlc-pr.yml']

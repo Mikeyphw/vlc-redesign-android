@@ -307,6 +307,12 @@ jobs:
           set -euo pipefail
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;21.4.7075529'
           printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+      - name: Reconstruct exact upstream LibVLCJNI Gradle project (no native rebuild)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B ci/medialibrary.py source
+          python3 -B ci/prepare_android_gradle.py prepare
       - name: Derive APK cache key from all non-CI tracked build inputs
         id: apk-key
         shell: bash
@@ -332,13 +338,17 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B ci/medialibrary.py verify-maven
+          python3 -B ci/prepare_android_gradle.py verify
           gradle --no-daemon --stacktrace :application:app:testDebugUnitTest
       - name: Assemble Android debug APK only if inputs changed
         if: steps.apk-cache.outputs.cache-hit != 'true'
         shell: bash
         env:
           RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
-        run: gradle --no-daemon --stacktrace :application:app:assembleDebug
+        run: |
+          set -euo pipefail
+          python3 -B ci/prepare_android_gradle.py verify
+          gradle --no-daemon --stacktrace :application:app:assembleDebug
       - name: Qualify unchanged or newly built APK and checksums
         shell: bash
         run: |
