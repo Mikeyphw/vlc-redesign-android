@@ -40,6 +40,8 @@ import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import org.videolan.medialibrary.interfaces.media.Playlist
 import org.videolan.tools.isStarted
+import org.videolan.tools.Settings
+import org.videolan.tools.putSingle
 import org.videolan.vlc.R
 import org.videolan.vlc.gui.BaseFragment
 import org.videolan.vlc.gui.ContentActivity
@@ -54,6 +56,8 @@ import org.videolan.vlc.util.findCurrentFragment
  * Fragment containing the video viewpager
  *
  */
+private const val RD_VIDEO_CURRENT_TAB = "rd_video_current_tab"
+
 class VideoBrowserFragment : BaseFragment(), TabLayout.OnTabSelectedListener, Filterable {
     override fun getTitle() = getString(R.string.videos)
 
@@ -89,6 +93,11 @@ class VideoBrowserFragment : BaseFragment(), TabLayout.OnTabSelectedListener, Fi
         viewPager = view.findViewById(R.id.pager)
         videoPagerAdapter = VideoPagerAdapter(this)
         viewPager.adapter = videoPagerAdapter
+        // A fresh navigation to Videos restores the user's subtab; Android handles rotations itself.
+        if (savedInstanceState == null) {
+            val selected = Settings.getInstance(requireContext()).getInt(RD_VIDEO_CURRENT_TAB, 0).coerceIn(0, 1)
+            viewPager.setCurrentItem(selected, false)
+        }
         // VLC Redesign, the TV layout: ViewPager2 gives the focus to its own list first (FOCUS_BEFORE_DESCENDANTS), so
         // the remote's Right from the sidebar or Down from the header stopped on the whole page, never on a video;
         // the page's videos take it instead
@@ -114,6 +123,7 @@ class VideoBrowserFragment : BaseFragment(), TabLayout.OnTabSelectedListener, Fi
 
     override fun onTabSelected(tab: TabLayout.Tab) {
         setFabPlayVisibility(hasFAB())
+        Settings.getInstance(requireContext()).putSingle(RD_VIDEO_CURRENT_TAB, tab.position.coerceIn(0, 1))
     }
 
     override fun onTabUnselected(tab: TabLayout.Tab) {

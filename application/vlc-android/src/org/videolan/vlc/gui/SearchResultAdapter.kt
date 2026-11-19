@@ -29,8 +29,9 @@ class SearchResultAdapter internal constructor(private val mLayoutInflater: Layo
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val item = mDataList!![position]
-        if (item.artworkMrl.isNullOrEmpty())
-            holder.binding.cover = UiTools.getDefaultCover(holder.itemView.context, item)
+        // Recycled rows must not retain another item's fallback artwork.
+        holder.binding.cover = if (item.artworkMrl.isNullOrEmpty())
+            UiTools.getDefaultCover(holder.itemView.context, item) else null
         holder.binding.item = item
         val isNotVideo = item !is MediaWrapper || item.type != MediaWrapper.TYPE_VIDEO
         holder.binding.isSquare = isNotVideo

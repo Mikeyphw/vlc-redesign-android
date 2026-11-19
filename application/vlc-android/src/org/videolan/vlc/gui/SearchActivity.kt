@@ -14,6 +14,7 @@ import androidx.databinding.DataBindingUtil
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import kotlinx.coroutines.Job
 import org.videolan.medialibrary.interfaces.Medialibrary
 import org.videolan.medialibrary.media.MediaLibraryItem
 import org.videolan.medialibrary.media.SearchAggregate
@@ -31,6 +32,8 @@ open class SearchActivity : BaseActivity(), TextWatcher, TextView.OnEditorAction
     private lateinit var medialibrary: Medialibrary
     private lateinit var binding: SearchActivityBinding
     private val clickHandler = ClickHandler()
+    private var searchJob: Job? = null
+    private var searchGeneration = 0L
     override fun getSnackAnchorView(overAudioPlayer:Boolean): View? = findViewById(android.R.id.content)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,37 +44,63 @@ open class SearchActivity : BaseActivity(), TextWatcher, TextView.OnEditorAction
         binding.handler = clickHandler
         binding.searchAggregate = SearchAggregate()
         medialibrary = Medialibrary.getInstance()
-        if (Intent.ACTION_SEARCH == intent.action || "com.google.android.gms.actions.SEARCH_ACTION" == intent.action) {
-            val query = intent.getStringExtra(SearchManager.QUERY)
-            initializeLists()
-            if (!query.isNullOrEmpty()) {
-                window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
-                binding.searchEditText.setText(query)
-                binding.searchEditText.setSelection(query.length)
-                performSearh(query)
-            }
-        }
+        // Initialize adapters for every launch path, including the in-app search icon.
+        initializeLists()
         binding.searchEditText.addTextChangedListener(this)
         binding.searchEditText.setOnEditorActionListener(this)
         binding.audioEmptyLoading.state = EmptyLoadingState.NONE
+        val incoming = if (Intent.ACTION_SEARCH == intent.action ||
+            "com.google.android.gms.actions.SEARCH_ACTION" == intent.action) intent.getStringExtra(SearchManager.QUERY) else null
+        val query = savedInstanceState?.getString(STATE_SEARCH_QUERY) ?: incoming
+        if (!query.isNullOrBlank()) {
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
+            binding.searchEditText.setText(query)
+            binding.searchEditText.setSelection(query.length)
+        }
     }
 
-    private fun performSearh(query: String?) {
-        if (query != null && query.isNotEmpty()) lifecycleScope.launchWhenStarted {
-            val searchAggregate = getFromMl { search(query, Settings.includeMissing, false) }
-            binding.searchAggregate = searchAggregate
-            if (searchAggregate.isEmpty) {
-                binding.audioEmptyLoading.state = EmptyLoadingState.EMPTY_SEARCH
-            } else binding.audioEmptyLoading.state = EmptyLoadingState.NONE
-            searchAggregate?.let { result ->
-                result.albums?.filterNotNull()?.let { (binding.albumsResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
-                result.artists?.filterNotNull()?.let { (binding.artistsResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
-                result.genres?.filterNotNull()?.let { (binding.genresResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
-                result.playlists?.filterNotNull()?.let { (binding.playlistsResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
-                result.videos?.filterNotNull()?.let { (binding.othersResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
-                result.tracks?.filterNotNull()?.let { (binding.songsResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
-            }
+    private fun performSearch(query: String?) {
+        // Cancellation plus a monotonically increasing generation prevents an old library scan
+        // from replacing results for a newer query, including after rapid text edits.
+        searchJob?.cancel()
+        val generation = ++searchGeneration
+        clearResults()
+        binding.searchAggregate = SearchAggregate()
+        val normalized = query?.trim().orEmpty()
+        if (normalized.isEmpty()) {
+            binding.audioEmptyLoading.state = EmptyLoadingState.NONE
+            return
         }
+        binding.audioEmptyLoading.state = EmptyLoadingState.LOADING
+        searchJob = lifecycleScope.launchWhenStarted {
+            val result = getFromMl { search(normalized, Settings.includeMissing, false) }
+            if (generation != searchGeneration || binding.searchEditText.text.toString().trim() != normalized) return@launchWhenStarted
+            binding.searchAggregate = result
+            binding.audioEmptyLoading.state = if (result.isEmpty) EmptyLoadingState.EMPTY_SEARCH else EmptyLoadingState.NONE
+            result.albums?.filterNotNull()?.let { (binding.albumsResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
+            result.artists?.filterNotNull()?.let { (binding.artistsResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
+            result.genres?.filterNotNull()?.let { (binding.genresResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
+            result.playlists?.filterNotNull()?.let { (binding.playlistsResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
+            result.videos?.filterNotNull()?.let { (binding.othersResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
+            result.tracks?.filterNotNull()?.let { (binding.songsResults.adapter as SearchResultAdapter).add(it.toTypedArray()) }
+        }
+    }
+
+    private fun clearResults() {
+        for (i in 0 until binding.resultsContainer.childCount) {
+            val list = binding.resultsContainer.getChildAt(i) as? RecyclerView ?: continue
+            (list.adapter as? SearchResultAdapter)?.add(emptyArray())
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_SEARCH_QUERY, binding.searchEditText.text.toString())
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onDestroy() {
+        searchJob?.cancel()
+        super.onDestroy()
     }
 
     private fun initializeLists() {
@@ -91,10 +120,7 @@ open class SearchActivity : BaseActivity(), TextWatcher, TextView.OnEditorAction
     override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {}
 
     override fun afterTextChanged(s: Editable?) {
-        if (s == null || s.isEmpty())
-            binding.searchAggregate = SearchAggregate()
-        else
-            performSearh(s.toString())
+        performSearch(s?.toString())
     }
 
     override fun onEditorAction(v: TextView?, actionId: Int, event: KeyEvent?): Boolean {
@@ -120,5 +146,6 @@ open class SearchActivity : BaseActivity(), TextWatcher, TextView.OnEditorAction
     companion object {
 
         const val TAG = "VLC/SearchActivity"
+        private const val STATE_SEARCH_QUERY = "rd_search_query"
     }
 }
