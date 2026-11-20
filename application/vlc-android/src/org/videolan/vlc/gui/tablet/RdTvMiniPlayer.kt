@@ -66,6 +66,9 @@ object RdTvMiniPlayer {
             contentDescription = ctx.getString(R.string.rd_mini_player)
             visibility = View.GONE
             setOnClickListener { open(activity) }
+            onFocusChangeListener = View.OnFocusChangeListener { view, has ->
+                (view.background as? GradientDrawable)?.setStroke(if (has) 2.dp else 0, accent)
+            }
         }
         // the picture: the video's frame or the song's cover (radius 6, the 2 px #090909 line over it)
         val pictureBox = FrameLayout(ctx).apply {
@@ -99,7 +102,7 @@ object RdTvMiniPlayer {
         // the folder, the artist, the queue (.sh-mini-row: 32 high, 14 under the title)
         val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         fun chip(icon: Int): TextView {
-            row.addView(ImageView(ctx).apply { setImageResource(icon); setColorFilter(RdTvWindow.ICON) }, LinearLayout.LayoutParams(24.dp, 24.dp).apply { marginEnd = 8.dp })
+            row.addView(ImageView(ctx).apply { setImageResource(icon); setColorFilter(RdTvWindow.ICON); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }, LinearLayout.LayoutParams(24.dp, 24.dp).apply { marginEnd = 8.dp })
             return text(16f, RdTvWindow.FG_2).also { row.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = 20.dp }) ; it.maxWidth = 120.dp }
         }
         val folder = chip(R.drawable.rd_tvd_folder)
@@ -114,10 +117,15 @@ object RdTvMiniPlayer {
             isFocusable = true
             isClickable = true
             background = GradientDrawable().apply { cornerRadius = 4.dp.toFloat(); setColor(0) }
-            onFocusChangeListener = View.OnFocusChangeListener { v, has -> (v.background as GradientDrawable).setColor(if (has) 0xFF222222.toInt() else 0) }
+            onFocusChangeListener = View.OnFocusChangeListener { v, has ->
+                (v.background as GradientDrawable).apply {
+                    setColor(if (has) 0xFF222222.toInt() else 0)
+                    setStroke(if (has) 2.dp else 0, accent)
+                }
+            }
             setOnClickListener { queue(activity, card) }
-        }, LinearLayout.LayoutParams(30.dp, 32.dp))
-        card.addView(row, LinearLayout.LayoutParams(359.dp, 32.dp).apply { setMargins(8.dp, 14.dp, 8.dp, 4.dp) })
+        }, LinearLayout.LayoutParams(48.dp, 48.dp))
+        card.addView(row, LinearLayout.LayoutParams(359.dp, 48.dp).apply { setMargins(8.dp, 14.dp, 8.dp, 4.dp) })
         coordinator.addView(card, CoordinatorLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.BOTTOM or Gravity.END
             // (the end's margin, not the right's: in Hebrew and Arabic the card touched the window's edge)
@@ -199,6 +207,9 @@ object RdTvMiniPlayer {
         val key = "${media.uri}|${media.title}|${media.artistName}|${media.albumName}|${media.artworkMrl}"
         if (v.media == key) return
         v.media = key
+        v.card.contentDescription = media.title?.takeIf { it.isNotBlank() }?.let {
+            activity.getString(R.string.rd_m6_mini_now_playing, it)
+        } ?: activity.getString(R.string.rd_mini_player)
         v.title.text = media.title
         v.folder.text = media.uri.path?.let { java.io.File(it).parentFile?.name }.orEmpty()
         v.artist.text = media.artistName?.takeIf { it.isNotBlank() } ?: media.albumName?.takeIf { it.isNotBlank() } ?: v.folder.text

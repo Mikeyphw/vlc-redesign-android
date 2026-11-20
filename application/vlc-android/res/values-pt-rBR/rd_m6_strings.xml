@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rd_m6_reduce_motion">Reduzir movimento da interface</string>
+    <string name="rd_m6_reduce_motion_summary">Usar rolagem e transições de foco imediatas. Também respeita as configurações de animação do Android.</string>
+    <string name="rd_m6_current_page">Página atual das configurações</string>
+    <string name="rd_m6_mini_now_playing">Abrir reprodução atual: %1$s</string>
+</resources>

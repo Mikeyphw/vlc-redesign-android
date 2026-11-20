@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rd_m6_reduce_motion">Reduce interface motion</string>
+    <string name="rd_m6_reduce_motion_summary">Use immediate scrolling and focus transitions. Also respects Android animation settings.</string>
+    <string name="rd_m6_current_page">Current settings page</string>
+    <string name="rd_m6_mini_now_playing">Open now playing: %1$s</string>
+</resources>

@@ -36,7 +36,12 @@ object RdTvPlayerTopBar {
     fun apply(player: VideoPlayerActivity, hud: ConstraintLayout, title: TextView, folder: () -> String?) {
         if (hud.findViewById<View>(R.id.rd_tv_titlebar) != null) return
         // the phone's bar: kept (the code shows and hides its parts) but not seen nor reached
-        for (i in 0 until hud.childCount) hud.getChildAt(i).apply { alpha = 0f; isFocusable = false; isClickable = false }
+        for (i in 0 until hud.childCount) hud.getChildAt(i).apply {
+            alpha = 0f
+            isFocusable = false
+            isClickable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        }
         hud.setPadding(0, 0, 0, 0)
         hud.setBackgroundColor(0xFF1B1B1B.toInt())
         val ctx = player
@@ -54,13 +59,18 @@ object RdTvPlayerTopBar {
         fun button(icon: Int, desc: Int, x: Int, onClick: () -> Unit) = ImageView(ctx).apply {
             setImageResource(icon)
             setColorFilter(GREY)
-            setPadding(2.dp, 2.dp, 2.dp, 2.dp)
+            setPadding(6.dp, 6.dp, 6.dp, 6.dp)
             contentDescription = ctx.getString(desc)
             isFocusable = true
             isClickable = true
             background = GradientDrawable().apply { cornerRadius = 6.dp.toFloat(); setColor(0) }
+            // D-pad focus has a visible 2dp stroke, without another focusable child.
+            setOnFocusChangeListener { view, has ->
+                (view.background as? GradientDrawable)?.setStroke(if (has) 2.dp else 0,
+                    org.videolan.vlc.gui.helpers.UiTools.getColorFromAttribute(ctx, androidx.appcompat.R.attr.colorPrimary))
+            }
             setOnClickListener { onClick() }
-            bar.addView(this, FrameLayout.LayoutParams(28.dp, 28.dp).apply { marginStart = x.dp; topMargin = 6.dp })
+            bar.addView(this, FrameLayout.LayoutParams(36.dp, 36.dp).apply { marginStart = x.dp; topMargin = 2.dp })
         }
         bar.addView(ImageView(ctx).apply {
             setImageResource(R.drawable.rd_ic_logo)
