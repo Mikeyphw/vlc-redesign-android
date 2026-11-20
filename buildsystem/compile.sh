@@ -405,6 +405,23 @@ if [ "$NO_ML" != 1 ]; then
     cp -a medialibrary/jni/libs/${ANDROID_ABI}/*.so "${OUT_DBG_DIR}"
 fi
 
+# Hosted native-only ABI qualification: the LibVLC JNI shared library has
+# already been built with upstream's genuine compiler. The Gradle
+# assembleRelease/assembleDev step below packages a *separate* Android
+# project and is qualified by the mandatory downstream Maven/JVM/APK jobs.
+# Never skip C/C++ compilation, change the selected ABI, or weaken any
+# source/OCI/ELF/receipt checks. The flag is valid only with -t -l --release.
+if [ "${VLC_NATIVE_CI_ONLY:-0}" = "1" ]; then
+    if [ "${BUILD_LIBVLC:-0}" != "1" ] || [ "${NO_ML:-0}" != "1" ] || [ "${RELEASE:-0}" != "1" ] || [ "${PREBUILT_CONTRIBS:-0}" != "1" ]; then
+        fail "VLC_NATIVE_CI_ONLY requires -t -l --release"
+    fi
+    if [ ! -s "${OUT_DBG_DIR}/libvlcjni.so" ]; then
+        fail "VLC_NATIVE_CI_ONLY requires compiled LibVLC JNI ELF"
+    fi
+    diagnostic "VLC_NATIVE_CI_LIBVLC_PASS: compiled ${ANDROID_ABI} JNI; Android Gradle tests and packaging remain required downstream"
+    exit 0
+fi
+
 ##################
 # Compile the UI #
 ##################

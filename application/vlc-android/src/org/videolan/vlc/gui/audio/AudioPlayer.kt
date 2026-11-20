@@ -390,6 +390,7 @@ class AudioPlayer : Fragment(), PlaylistAdapter.IPlayer, TextWatcher, IAudioPlay
             playlistModel.speed.value?.let {
                 if (it != 1.0F) binding.playbackSpeedQuickAction.setVisible()
                 binding.playbackSpeedQuickAction.text = it.formatRateString()
+                binding.playbackSpeedQuickAction.contentDescription = getString(R.string.playback_speed) + ": " + it.formatRateString()
             }
             if (settings.getBoolean(KEY_PLAYBACK_SPEED_AUDIO_GLOBAL, false)) {
                 binding.playbackSpeedQuickAction.chipIcon = ContextCompat.getDrawable(requireActivity(), R.drawable.ic_speed_all)
@@ -399,6 +400,7 @@ class AudioPlayer : Fragment(), PlaylistAdapter.IPlayer, TextWatcher, IAudioPlay
             PlaybackService.playerSleepTime.value?.let {
                 binding.sleepQuickAction.setVisible()
                 binding.sleepQuickAction.text = DateFormat.getTimeFormat(requireContext()).format(it.time)
+                binding.sleepQuickAction.contentDescription = getString(R.string.sleep_title) + ": " + binding.sleepQuickAction.text
             }
         }
     }
@@ -694,6 +696,12 @@ class AudioPlayer : Fragment(), PlaylistAdapter.IPlayer, TextWatcher, IAudioPlay
         binding.length.text = if (showRemainingTime) Tools.millisToString(progress.time - progress.length) else progress.lengthText
         binding.timeline.max = progress.length.toInt()
         binding.progressBar.max = progress.length.toInt()
+        // A focused seek bar should announce elapsed and total time, not only an opaque percentage.
+        binding.timeline.contentDescription = if (progress.length > 0L) {
+            getString(R.string.seek) + ": " + getString(R.string.talkback_out_of,
+                TalkbackUtil.millisToString(requireActivity(), progress.time),
+                TalkbackUtil.millisToString(requireActivity(), progress.length))
+        } else getString(R.string.seek)
 
         if (!previewingSeek) {
             val displayTime = progress.timeText

@@ -49,6 +49,52 @@ def must_have(text: str, literal: str, label: str) -> None:
         raise ContractFailure(label + ' missing: ' + literal)
 
 
+def require_native_only_libvlc_contract(native_script: str, compiler: str) -> None:
+    """Native-only CI skips only upstream's unrelated Gradle project assembly.
+
+    It MUST run real LibVLC JNI compilation first, verify the JNI output,
+    and leave patched MediaLibrary native + downstream Maven/JVM/APK gates.
+    """
+    native_call = 'VLC_NATIVE_CI_ONLY=1 ./buildsystem/compile.sh -a "$ABI" -t -l --release'
+    media_call = './buildsystem/compile-medialibrary.sh -a "$ABI" --release'
+    if native_script.count(native_call) != 1 or native_script.count(media_call) != 1:
+        raise ContractFailure('missing or duplicated real native LibVLC/MediaLibrary stages')
+    if native_script.index(native_call) >= native_script.index(media_call):
+        raise ContractFailure('MediaLibrary must follow successful native LibVLC compilation')
+    if 'VLC_NATIVE_CI_ONLY=1 '+media_call in native_script:
+        raise ContractFailure('native-only scope illegally covers MediaLibrary')
+    gate = 'if [ "${VLC_NATIVE_CI_ONLY:-0}" = "1" ]; then'
+    if compiler.count(gate) != 1:
+        raise ContractFailure('native-only exit is not explicitly scoped')
+    native_compile = '${VLC_LIBJNI_PATH}/buildsystem/compile-libvlc.sh -a ${ARCH}'
+    native_output = 'cp -a ${VLC_LIBJNI_PATH}/libvlc/jni/obj/local/${ANDROID_ABI}/*.so "${OUT_DBG_DIR}"'
+    ui = '# Compile the UI #'
+    if any(compiler.count(t)!=1 for t in (native_compile, native_output, ui)):
+        raise ContractFailure('native compile or UI boundary changed')
+    start = compiler.index(gate)
+    if not (compiler.index(native_compile) < compiler.index(native_output) < start < compiler.index(ui)):
+        raise ContractFailure('native-only flag bypasses real native compiler or output')
+    end = compiler.find('\nfi\n', start)
+    if end < 0 or end >= compiler.index(ui):
+        raise ContractFailure('unterminated or unscoped native-only block')
+    block = compiler[start:end+4]
+    required = (
+        '"${BUILD_LIBVLC:-0}" != "1"',
+        '"${NO_ML:-0}" != "1"',
+        '"${RELEASE:-0}" != "1"',
+        '"${PREBUILT_CONTRIBS:-0}" != "1"',
+        'fail "VLC_NATIVE_CI_ONLY requires -t -l --release"',
+        'if [ ! -s "${OUT_DBG_DIR}/libvlcjni.so" ]; then',
+        'fail "VLC_NATIVE_CI_ONLY requires compiled LibVLC JNI ELF"',
+        'diagnostic "VLC_NATIVE_CI_LIBVLC_PASS:',
+        '\n    exit 0\n',
+    )
+    if any(t not in block for t in required) or block.count('exit 0')!=1:
+        raise ContractFailure('unsafe native-only mode without argument/ELF guards')
+    if compiler.count('VLC_NATIVE_CI_ONLY') != 3:
+        raise ContractFailure('native-only mode guards were removed')
+
+
 def require_workflow_contract(contents: dict[str, str]) -> None:
     if WORKFLOW_FILE not in contents or 'vlc-upstream.yml' not in contents:
         raise ContractFailure('required PR/upstream workflows missing')
@@ -147,6 +193,11 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
     if native_segment.count('python3 -B ci/verify_android_sdk.py --sdk "$sdk_root"') != 2:
         raise ContractFailure('runner SDK must be verified both after install and before mount')
     native_script=(ROOT/'ci/build_medialibrary_abi.sh').read_text('utf-8')
+    # Current native-only CI qualifies the ELF before using any Gradle assembly.
+    compile_path=ROOT/'buildsystem/compile.sh'
+    if not compile_path.is_file() or compile_path.is_symlink():
+        raise ContractFailure('source-owned LibVLC compiler missing or symlinked')
+    require_native_only_libvlc_contract(native_script, compile_path.read_text('utf-8'))
     for required in ('stat -c %u /workspace', 'stat -c %g /workspace',
                      '[ ! -w /workspace ]', '[ ! -w /workspace/.git ]',
                      '${HOME:-}', 'mkdir -p "$HOME"', '[ ! -w "$HOME" ]'):

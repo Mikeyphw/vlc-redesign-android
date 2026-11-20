@@ -421,6 +421,7 @@
         <TextView
                 android:id="@+id/player_overlay_rewind_text"
                 style="@style/RD.Player.SeekButtonText"
+                android:importantForAccessibility="no"
                 android:visibility="gone"
                 tools:visibility="visible"
                 tools:text="88"
@@ -456,6 +457,7 @@
         <TextView
                 android:id="@+id/player_overlay_forward_text"
                 style="@style/RD.Player.SeekButtonText"
+                android:importantForAccessibility="no"
                 android:visibility="gone"
                 tools:visibility="visible"
                 tools:text="88"

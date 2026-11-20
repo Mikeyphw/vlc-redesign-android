@@ -1310,6 +1310,10 @@ class VideoPlayerOverlayDelegate (private val player: VideoPlayerActivity) {
         hudBinding.playerOverlayForwardText.visibility = hudBinding.playerOverlayForward.visibility
         hudBinding.playerOverlayRewindText.text = "${Settings.videoJumpDelay}"
         hudBinding.playerOverlayForwardText.text = "${Settings.videoJumpDelay}"
+        // Custom HUD profiles can add seek buttons after the standard overlay's labels were set.
+        // Keep their spoken jump durations synchronized when the bar is reconfigured.
+        hudBinding.playerOverlayRewind.contentDescription = player.getString(R.string.talkback_action_rewind, Settings.videoJumpDelay.toString())
+        hudBinding.playerOverlayForward.contentDescription = player.getString(R.string.talkback_action_forward, Settings.videoJumpDelay.toString())
         val enabled = player.service?.hasPlaylist() == true && !player.isLocked
         arrayOf(hudBinding.playlistPrevious, hudBinding.playlistNext).forEach {
             it.isEnabled = enabled
@@ -1508,8 +1512,13 @@ class VideoPlayerOverlayDelegate (private val player: VideoPlayerActivity) {
                 hudRightBinding.sleepQuickAction.text = format.format(it.time)
                 hudRightBinding.sleepQuickAction.contentDescription = player.getString(R.string.sleep_in).talkbackAppend(TalkbackUtil.millisToString(player, it.time.time - System.currentTimeMillis()))
             }
-            hudRightBinding.spuDelayQuickAction.text = "${(player.service?.spuDelay ?: 0L) / 1000L} ms"
-            hudRightBinding.audioDelayQuickAction.text = "${(player.service?.audioDelay ?: 0L) / 1000L} ms"
+            val subtitleDelayMs = (player.service?.spuDelay ?: 0L) / 1000L
+            val audioDelayMs = (player.service?.audioDelay ?: 0L) / 1000L
+            hudRightBinding.spuDelayQuickAction.text = "$subtitleDelayMs ms"
+            hudRightBinding.audioDelayQuickAction.text = "$audioDelayMs ms"
+            // Separate the type of sync adjustment from its signed value for TalkBack and TV focus.
+            hudRightBinding.spuDelayQuickAction.contentDescription = player.getString(R.string.spu_delay) + ": $subtitleDelayMs ms"
+            hudRightBinding.audioDelayQuickAction.contentDescription = player.getString(R.string.audio_delay) + ": $audioDelayMs ms"
 
         }
 
