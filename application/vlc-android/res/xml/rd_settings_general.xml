@@ -41,6 +41,15 @@
             android:title="@string/rd_accent_color"
             android:entries="@array/rd_accent_entries"
             android:entryValues="@array/rd_accent_values" />
+        <!-- M5: read-only current-palette + player sample; uses existing theme keys. -->
+        <org.videolan.vlc.gui.preferences.rd.RdAppearancePreviewPreference
+            android:key="rd_m5_live_preview"
+            android:title="@string/rd_m5_preview_title" />
+        <org.videolan.vlc.gui.preferences.rd.RdActionPreference
+            android:key="rd_m5_reset_appearance"
+            android:title="@string/rd_m5_reset_title"
+            android:summary="@string/rd_m5_reset_summary"
+            app:actionText="@string/rd_m5_reset_action" />
     </PreferenceCategory>
     <PreferenceCategory android:title="@string/rd_sec_startup">
         <!-- VLC Redesign's releases on GitHub (util/RdUpdateCheck) -->
