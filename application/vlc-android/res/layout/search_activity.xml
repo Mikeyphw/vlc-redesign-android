@@ -84,6 +84,21 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Search is global, while sorting/filtering remains in the respective library tabs. -->
+        <TextView
+                android:id="@+id/rd_m8_search_help"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginEnd="16dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="12dp"
+                android:fontFamily="@font/inter"
+                android:text="@string/rd_m8_search_help"
+                android:textColor="@color/rd_fg_a1"
+                android:textSize="13sp"
+                android:visibility="visible" />
+
         <androidx.core.widget.NestedScrollView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

@@ -276,7 +276,7 @@
         <org.videolan.vlc.gui.view.AccessibleSeekBar
                 android:id="@+id/player_overlay_seekbar"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="48dp"
                 android:layout_marginLeft="@dimen/rd_player_seek_gap"
                 android:layout_marginRight="@dimen/rd_player_seek_gap"
                 android:focusable="true"

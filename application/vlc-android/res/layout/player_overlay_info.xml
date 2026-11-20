@@ -19,7 +19,9 @@
             android:paddingRight="16dp"
             android:textColor="@color/rd_dark_fg_1"
             android:fontFamily="@font/inter"
-            android:textSize="30sp"
+            android:textSize="24sp"
+            android:maxWidth="300dp"
+            android:maxLines="3"
             tools:text="Audio delay\n0ms" />
 
     <TextView
@@ -32,7 +34,8 @@
             android:paddingRight="16dp"
             android:textColor="@color/rd_dark_fg_a2"
             android:fontFamily="@font/inter"
-            android:textSize="13sp"
+            android:textSize="14sp"
+            android:maxWidth="300dp"
             android:visibility="gone"
             tools:text="Audio delay\n0ms"
             tools:visibility="visible" />

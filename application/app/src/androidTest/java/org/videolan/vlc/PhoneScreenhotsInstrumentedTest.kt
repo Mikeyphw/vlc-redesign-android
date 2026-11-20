@@ -90,6 +90,8 @@ class PhoneScreenhotsInstrumentedTest : BaseUITest() {
 
         onView(withId(R.id.ml_menu_last_playlist)).perform(click())
         onView(isRoot()).perform(waitId(R.id.audio_media_switcher, 5000))
+        // M8: capture the collapsed mini-player before expanding it.
+        ScreenshotUtil.takeScreenshot(11, "m8_mini_player")
         activity.slideUpOrDownAudioPlayer()
         SystemClock.sleep(1500)
         waitUntilLoaded { activity.findViewById(R.id.songs_list) }
@@ -146,6 +148,14 @@ class PhoneScreenhotsInstrumentedTest : BaseUITest() {
 
         ScreenshotUtil.takeScreenshot(5,"browser")
      }
+
+    @Test
+    fun testM8HomeScreenshot() {
+        onView(AllOf.allOf(withId(R.id.nav_home), withEffectiveVisibility(Visibility.VISIBLE)))
+                .perform(click())
+        onView(isRoot()).perform(waitId(R.id.rd_home_scroll, 5000))
+        ScreenshotUtil.takeScreenshot(10, "m8_home")
+    }
 
     private fun rotateLandscape() = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).setOrientationLeft()
     private fun disableRotateLandscape() = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).setOrientationNatural()

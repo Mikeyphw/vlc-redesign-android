@@ -255,6 +255,8 @@ class AudioPlayer : Fragment(), PlaylistAdapter.IPlayer, TextWatcher, IAudioPlay
         binding.audioMediaSwitcher.setAudioMediaSwitcherListener(headerMediaSwitcherListener)
         binding.coverMediaSwitcher.setAudioMediaSwitcherListener(coverMediaSwitcherListener)
         binding.playlistSearchText.editText?.addTextChangedListener(this)
+        // M8: the collapsed player has a discoverable, spoken expansion action.
+        binding.header.contentDescription = getString(R.string.rd_m8_expand_player)
         binding.header.setOnClickListener {
             val activity = activity as AudioPlayerContainerActivity
             activity.slideUpOrDownAudioPlayer()

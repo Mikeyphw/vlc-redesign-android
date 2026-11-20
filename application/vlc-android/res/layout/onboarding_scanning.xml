@@ -93,5 +93,17 @@
                 android:text="@string/rd_ob_browse"
                 android:textColor="@color/rd_dark_fg_2" />
         </LinearLayout>
+
+        <!-- M8: choosing a folder requires checking its box; entering it does not select it. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:fontFamily="@font/inter"
+            android:gravity="center"
+            android:lineSpacingExtra="2dp"
+            android:text="@string/rd_m8_folder_checkbox_hint"
+            android:textColor="@color/rd_dark_fg_a2"
+            android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>

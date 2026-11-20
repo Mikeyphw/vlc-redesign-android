@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rd_m8_empty_library_help">No media in your library yet. Select the folders you want VLC to scan.</string>
+    <string name="rd_m8_choose_media_folders">Choose media folders</string>
+    <string name="rd_m8_folder_checkbox_hint">Browse to your media folders, then check the box beside each folder you want to scan. Opening a folder does not select it.</string>
+    <string name="rd_m8_expand_player">Expand audio player</string>
+    <string name="rd_m8_search_help">Search videos, songs, albums, artists, and playlists. Use the library tabs for sorting and filters.</string>
+</resources>

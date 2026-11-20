@@ -67,6 +67,7 @@ open class SearchActivity : BaseActivity(), TextWatcher, TextView.OnEditorAction
         clearResults()
         binding.searchAggregate = SearchAggregate()
         val normalized = query?.trim().orEmpty()
+        binding.rdM8SearchHelp.visibility = if (normalized.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
         if (normalized.isEmpty()) {
             binding.audioEmptyLoading.state = EmptyLoadingState.NONE
             return

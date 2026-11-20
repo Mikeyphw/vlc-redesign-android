@@ -44,6 +44,7 @@ import org.videolan.tools.dp
 import org.videolan.tools.rdWidthDp
 import org.videolan.vlc.gui.tablet.RdTvPrebuild
 import org.videolan.vlc.gui.tablet.RdTvWindow
+import org.videolan.vlc.gui.preferences.rd.RdMotionPolicy
 import org.videolan.vlc.databinding.RdHomeCardBinding
 import org.videolan.vlc.gui.browser.KEY_MEDIA
 import org.videolan.vlc.gui.dialogs.CtxActionReceiver
@@ -161,7 +162,14 @@ class HomeFragment : BaseFragment(), CtxActionReceiver, Medialibrary.HistoryCb, 
             // (a row of videos and songs together ends in a fade: its cards are of two widths)
             list.isHorizontalFadingEdgeEnabled = newCards.any { it.media.type == MediaWrapper.TYPE_VIDEO && !it.folder } && newCards.any { it.media.type != MediaWrapper.TYPE_VIDEO || it.folder }
             adapter.notifyDataSetChanged()
+            // M8: a short, reduced-motion-aware reveal only when a section first gets content.
+            val appearing = view.visibility != View.VISIBLE && newCards.isNotEmpty()
+            view.animate().cancel()
             view.visibility = if (newCards.isEmpty()) View.GONE else View.VISIBLE
+            if (appearing && RdMotionPolicy.shouldAnimate(view.context)) {
+                view.alpha = 0f
+                view.animate().alpha(1f).setDuration(140L).withEndAction { view.alpha = 1f }.start()
+            } else view.alpha = 1f
         }
     }
 
@@ -230,7 +238,10 @@ class HomeFragment : BaseFragment(), CtxActionReceiver, Medialibrary.HistoryCb, 
             // (a short window, the interface at 150 % and more: five covers a little under the design's size, not four
             // grown by a fifth, so the row under the first shows its covers and names before any scrolling)
             val square = if (res.displayMetrics.heightPixels / res.displayMetrics.density < 760f) 184.dp else 200.dp
-            val width = if (tv) section.cardWidth(if (video) 316.dp else square) else res.getDimensionPixelSize(if (video) R.dimen.rd_home_video_width else R.dimen.rd_home_square_width)
+            // Keep cards within narrow phone windows and split-screen without changing tablet sizing.
+            val availablePhoneWidth = (res.configuration.screenWidthDp - 32).coerceAtLeast(120).dp
+            val width = if (tv) section.cardWidth(if (video) 316.dp else square)
+                else minOf(res.getDimensionPixelSize(if (video) R.dimen.rd_home_video_width else R.dimen.rd_home_square_width), availablePhoneWidth)
             val height = if (tv && video) width * 178 / 316 else if (video) width * 9 / 16 else width
             if (tv) {
                 // the design's card (.sh-card): no frame around it, 20 to the next; the picture radius 8; the name
@@ -252,6 +263,7 @@ class HomeFragment : BaseFragment(), CtxActionReceiver, Medialibrary.HistoryCb, 
             b.isFolder = card.folder
             b.media = media
             b.title = media.title
+            b.duration = if (video && media.length > 0L) org.videolan.medialibrary.Tools.millisToString(media.length) else null
             b.subtitle = when {
                 card.folder -> null
                 media.type == MediaWrapper.TYPE_AUDIO -> media.artistName
@@ -297,6 +309,7 @@ class HomeFragment : BaseFragment(), CtxActionReceiver, Medialibrary.HistoryCb, 
     private lateinit var newVideos: Section
     private lateinit var newMusic: Section
     private lateinit var emptyView: View
+    private lateinit var emptyAction: View
     private var loadJob: Job? = null
     private var ctxSection: Section? = null
 
@@ -310,6 +323,8 @@ class HomeFragment : BaseFragment(), CtxActionReceiver, Medialibrary.HistoryCb, 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         emptyView = view.findViewById(R.id.rd_home_empty)
+        emptyAction = view.findViewById(R.id.rd_m8_pick_folders)
+        emptyAction.setOnClickListener { openSecondary(SecondaryActivity.STORAGE_BROWSER) }
         // the design's Home: the first title 35 under the header's line (.sh-home)
         if (RdTvWindow.isOn(view.context)) view.findViewById<View>(R.id.rd_home_scroll).let { it.setPadding(it.paddingLeft, (if (org.videolan.tools.rdPageScale > 1.01f) 24 else 36).dp, it.paddingRight, 40.dp) }
         continueWatching = Section(view.findViewById(R.id.rd_home_continue), R.string.rd_continue_watching, Kind.VIDEO) { openSecondary(SecondaryActivity.HISTORY) }
@@ -425,16 +440,19 @@ class HomeFragment : BaseFragment(), CtxActionReceiver, Medialibrary.HistoryCb, 
         val allowed = org.videolan.vlc.util.Permissions.canReadStorage(context)
         val empty = sections.all { it.cards.isEmpty() }
         if (!empty || (!libraryStarted && allowed)) {
+            emptyAction.visibility = View.GONE
             text.visibility = View.GONE
             return
         }
         if (allowed) {
-            text.setText(R.string.nomedia)
+            text.setText(R.string.rd_m8_empty_library_help)
+            emptyAction.visibility = View.VISIBLE
             text.setOnClickListener(null)
             text.isClickable = false
             text.isFocusable = false
             text.background = null
         } else {
+            emptyAction.visibility = View.GONE
             val ask = getString(R.string.permission_ask_again)
             val words = getString(R.string.permission_media) + "\n\n" + ask
             text.text = android.text.SpannableString(words).apply {
