@@ -25,6 +25,7 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.os.bundleOf
+import androidx.core.view.ViewCompat
 import androidx.core.widget.ImageViewCompat
 import androidx.fragment.app.Fragment
 import org.videolan.vlc.R
@@ -42,6 +43,7 @@ class RdSettingsSidebar : Fragment() {
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val ctx = requireContext()
         val d = { v: Float -> ctx.rdDp(v).toInt() }
+        rows.clear()
         val list = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(d(8f), d(8f), d(8f), d(16f))
@@ -127,8 +129,8 @@ class RdSettingsSidebar : Fragment() {
                 val list = v.parent as? ViewGroup ?: return@setOnFocusChangeListener
                 val scroll = list.parent as? ScrollView ?: return@setOnFocusChangeListener
                 val stops = (0 until list.childCount).map { list.getChildAt(it) }.filter { it.isFocusable }
-                if (v === stops.firstOrNull()) scroll.post { scroll.smoothScrollTo(0, 0) }
-                else if (v === stops.lastOrNull()) scroll.post { scroll.smoothScrollTo(0, list.height) }
+                if (v === stops.firstOrNull()) scroll.post { RdMotionPolicy.scrollTo(scroll, 0, 0) }
+                else if (v === stops.lastOrNull()) scroll.post { RdMotionPolicy.scrollTo(scroll, 0, list.height) }
             }
             if (key != ABOUT) row.setOnClickListener { v ->
                 if (current != key) onClick()
@@ -169,6 +171,14 @@ class RdSettingsSidebar : Fragment() {
 
     private var follow: Runnable? = null
 
+    override fun onDestroyView() {
+        // A deferred D-pad page opening must never run against a detached sidebar.
+        follow?.let { pending -> rows.values.forEach { row -> row.removeCallbacks(pending) } }
+        follow = null
+        rows.clear()
+        super.onDestroyView()
+    }
+
     /** The focus on the row of the page shown (the remote, coming back from the page) */
     fun focusCurrent(): Boolean = rows[current]?.requestFocus() == true
 
@@ -186,6 +196,7 @@ class RdSettingsSidebar : Fragment() {
         for ((k, row) in rows) {
             val on = k == key
             row.isActivated = on
+            ViewCompat.setStateDescription(row, if (on) ctx.getString(R.string.rd_m6_current_page) else null)
             val group = row as ViewGroup
             val image = group.getChildAt(0) as ImageView
             val text = group.getChildAt(1) as TextView

@@ -686,7 +686,8 @@ class RdSettingsPage : BasePreferenceFragment(), SharedPreferences.OnSharedPrefe
                 activity.recreate()
             }
             org.videolan.tools.KEY_RD_LAYOUT_DIRECTION, org.videolan.vlc.gui.helpers.KEY_RD_ACCENT_SYSTEM,
-            org.videolan.vlc.gui.helpers.KEY_RD_AMOLED, org.videolan.tools.KEY_RD_INCREASE_CONTRAST -> {
+            org.videolan.vlc.gui.helpers.KEY_RD_AMOLED, org.videolan.tools.KEY_RD_INCREASE_CONTRAST,
+            RdMotionPolicy.KEY -> {
                 activity.setRestart()
                 activity.recreate()
             }
