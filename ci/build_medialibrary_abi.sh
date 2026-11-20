@@ -78,7 +78,7 @@ chmod u+x ./gradlew
 export GRADLE_PATH_VERSION=9.6.0
 ./gradlew --version | grep -F 'Gradle 9.6.0'
 
-./buildsystem/compile.sh -a "$ABI" -t -l --release
+VLC_NATIVE_CI_ONLY=1 ./buildsystem/compile.sh -a "$ABI" -t -l --release
 # compile.sh -ml would launch an unrelated Maven publishing task. The exact
 # KuchiSofts native compiler is the invoked subscript; CI assembles the patched
 # AAR independently from the official classes and the resulting libmla.so.

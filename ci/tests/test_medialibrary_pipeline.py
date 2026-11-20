@@ -35,7 +35,8 @@ class TempMediaFixture:
             self.lock['patches'][name] = ml.git_blob(blob)
         self.write('ci/medialibrary.lock.json', ml.json_bytes(self.lock))
         self.write('ci/build_medialibrary_abi.sh', (CI_ROOT/'build_medialibrary_abi.sh').read_bytes())
-        self.write('buildsystem/compile.sh', 'LIBVLCJNI_TESTED_HASH='+self.lock['libvlcjni_commit']+'\n')
+        # Exercise the actual current native-only compiler contract, not a stale stub.
+        self.write('buildsystem/compile.sh', (CI_ROOT.parent/'buildsystem/compile.sh').read_bytes())
         self.write('buildsystem/compile-medialibrary.sh', 'MEDIALIBRARY_HASH='+self.lock['medialibrary_commit']+'\ngit clone http://code.videolan.org/videolan/medialibrary.git\n')
         self.write('build.gradle', "medialibraryVersion = (vlcMajorVersion == 3 ? '0.13.24-rd1' : '0.13.22-vlc4')\nSystem.getenv('RD_MAVEN')\n")
         self.write('application/vlc-android/build.gradle', 'debugApi "org.videolan.android:medialibrary-all:$rootProject.ext.medialibraryVersion"\n')
