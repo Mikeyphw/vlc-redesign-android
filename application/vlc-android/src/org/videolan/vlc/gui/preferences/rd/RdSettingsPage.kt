@@ -141,6 +141,7 @@ class RdSettingsPage : BasePreferenceFragment(), SharedPreferences.OnSharedPrefe
     private val page get() = RdPage.of(arguments?.getString(RD_PAGE)) ?: RdPage.GENERAL
     private lateinit var settings: SharedPreferences
     private var subtitlesChanged = false
+    private var resettingAppearance = false
     private var needToRestartOnResume = false
     private var services: RdSubtitleServices? = null
     private var languages: RdSubtitleLanguages? = null
@@ -185,6 +186,10 @@ class RdSettingsPage : BasePreferenceFragment(), SharedPreferences.OnSharedPrefe
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Repair malformed appearance-only values before PreferenceScreen inflation.
+        // Never rewrite a valid VideoLAN theme or another subsystem's preference.
+        if (page == RdPage.GENERAL) RdAppearancePreferences.migrate(
+            Settings.getInstance(requireActivity()), resources.getStringArray(R.array.rd_accent_values).toSet())
         super.onCreate(savedInstanceState)
         settings = Settings.getInstance(requireActivity())
         // Interface / General
@@ -197,6 +202,11 @@ class RdSettingsPage : BasePreferenceFragment(), SharedPreferences.OnSharedPrefe
         if (Settings.showTvUi) pref<Preference>(KEY_APP_THEME)?.isVisible = false
         // AMOLED is an opt-in phone/tablet palette, not a TV or player override.
         if (Settings.showTvUi) pref<Preference>(org.videolan.vlc.gui.helpers.KEY_RD_AMOLED)?.isVisible = false
+        // Phone/tablet live preview only: TV's theme is intentionally forced dark.
+        if (Settings.showTvUi) {
+            pref<Preference>("rd_m5_live_preview")?.isVisible = false
+            pref<Preference>("rd_m5_reset_appearance")?.isVisible = false
+        }
         // the TV layout's size: "Automatic (150 %)" with the size found for this screen, then the sizes
         pref<ListPreference>(org.videolan.tools.KEY_RD_INTERFACE_SCALE)?.let { lp ->
             lp.isVisible = Settings.showTvUi
@@ -405,6 +415,23 @@ class RdSettingsPage : BasePreferenceFragment(), SharedPreferences.OnSharedPrefe
         if (services?.click(key) == true) return true
         if (languages?.click(key) == true) return true
         when (key) {
+            "rd_m5_reset_appearance" -> {
+                if (Settings.showTvUi) return true
+                androidx.appcompat.app.AlertDialog.Builder(activity)
+                    .setTitle(R.string.rd_m5_reset_title)
+                    .setMessage(R.string.rd_m5_reset_confirm)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.rd_m5_reset_action) { _, _ ->
+                        // One atomic SharedPreferences edit, one themed Activity recreation.
+                        resettingAppearance = true
+                        RdAppearancePreferences.reset(settings)
+                        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+                        (activity as PreferencesActivity).setRestart()
+                        activity.recreate()
+                    }
+                    .show()
+                return true
+            }
             // Library
             "directories" -> {
                 if (Medialibrary.getInstance().isWorking) {
@@ -626,6 +653,8 @@ class RdSettingsPage : BasePreferenceFragment(), SharedPreferences.OnSharedPrefe
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
         val activity = activity as? PreferencesActivity ?: return
         if (sharedPreferences == null || key == null) return
+        // Reset changes four keys in one editor; suppress intermediate recreations.
+        if (resettingAppearance && key in RdAppearancePreferences.VISUAL_KEYS) return
         org.videolan.vlc.gui.livetv.TvSettings.changed(activity, key)
         // a service's switch or state (a check, a search): its row drawn again
         if (key.startsWith("rd_sub_service")) services?.refresh()

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rd_m5_preview_title">Live appearance preview</string>
+    <string name="rd_m5_preview_help">Colors and player styling update with the active theme</string>
+    <string name="rd_m5_library_sample">Library · Sample media</string>
+    <string name="rd_m5_player_sample">Player · Now playing</string>
+    <string name="rd_m5_dark">Dark</string>
+    <string name="rd_m5_light">Light</string>
+    <string name="rd_m5_amoled_on">AMOLED on</string>
+    <string name="rd_m5_amoled_off">AMOLED off</string>
+    <string name="rd_m5_live_state">%1$s · %2$s</string>
+    <string name="rd_m5_preview_accessibility">Appearance and player preview. %1$s</string>
+    <string name="rd_m5_reset_title">Reset appearance</string>
+    <string name="rd_m5_reset_summary">Restore system theme, default accent and AMOLED off. Other settings are unchanged.</string>
+    <string name="rd_m5_reset_action">Reset</string>
+    <string name="rd_m5_reset_confirm">Reset only the appearance choices? Your media, playback, subtitles and network settings will be preserved.</string>
+</resources>
