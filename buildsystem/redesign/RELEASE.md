@@ -10,30 +10,32 @@
   3.7.2 = `30702xx` with a release counter in the tens digit: 0.5.4 = `3070290`, its last step; every new code is
   above it, so 0.5.5 installs over 0.5.4.)
 
-## Signing
+## M7 signing and release qualification — Mikeyphw fork
 
-No key is kept in the repository. The `signedRelease` build type reads the key from the environment at release
-time:
+This fork uses **`com.mikeyphw.vlcredesign`**, not upstream KuchiSofts'
+`org.kuchisofts.vlcredesign`. Android treats them as different apps; no data
+migration or cross-app upgrades are promised. Android package source namespaces
+remain inherited from VideoLAN. Keep VideoLAN/KuchiSofts/Juxtopposed credits.
 
-| Variable | Meaning |
-|---|---|
-| `RD_KEYSTORE_FILE` | path to the keystore (`.jks` / `.keystore`), outside the repository |
-| `RD_KEYSTORE_PASSWORD` | the keystore's password |
-| `RD_KEY_ALIAS` | the key's alias |
-| `RD_KEY_PASSWORD` | the key's password (the keystore's when not set) |
+`assembleSignedRelease` requires **all four** environment-only inputs
+`RD_KEYSTORE_FILE`, `RD_KEYSTORE_PASSWORD`, `RD_KEY_ALIAS`, `RD_KEY_PASSWORD`
+with a readable private keystore and **never** falls back to upstream
+`keyStoreFile` / `storealias` / `storepwd` Gradle properties. The complete
+four-split build is performed only in the protected, manually dispatched
+`vlc-release.yml` workflow with a vetted GitHub `vlc-release` environment.
 
-```
-RD_KEYSTORE_FILE=... RD_KEYSTORE_PASSWORD=... RD_KEY_ALIAS=... \
-  gradle --no-daemon :application:app:assembleSignedRelease
-```
+A fresh successful read-only `vlc-pr.yml` **workflow_dispatch** run must be
+qualified on the **exact merged main SHA** before release secrets can be used.
+All seven required jobs, four ABI receipts and the patched Maven artifact
+are checked. The hosted staged release verifies four signed APKs, approved
+certificate SHA-256, package IDs, version codes, min/target SDK, and ABI
+metadata. It uploads SHA-256 receipts and an SPDX dependency inventory;
+**it does not automatically publish a GitHub Release**.
 
-Without the variables `signedRelease` falls back to upstream's `keyStoreFile` / `storealias` / `storepwd`
-Gradle properties; with neither, use `assembleRelease` (unsigned) and sign with `apksigner` afterwards.
-The application id is `org.kuchisofts.vlcredesign` (`.debug` for debug builds): the app installs beside VLC. The
-release key is kept outside the repository; every release must be signed with the same key, or users cannot update.
-
-Check the result: `apksigner verify --print-certs <apk>` (v1 + v2 schemes) and `aapt dump badging <apk>`
-(versionCode, versionName, the four ABIs or the split APKs).
+Production signing, independent device install/upgrade tests, SBOM/license
+and vulnerability review, provenance review and manual release approval are
+separate acceptance stages. Full instructions and limitations:
+[docs/M7_RELEASE_SECURITY.md](../../docs/M7_RELEASE_SECURITY.md).
 
 ## What the release check expects (desktop `extras/juxtopposed/release/release-check.py`)
 

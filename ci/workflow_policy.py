@@ -100,6 +100,10 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
         raise ContractFailure('required PR/upstream workflows missing')
     for filename, source in sorted(contents.items()):
         require_workflow_safe(source, filename=filename)
+    # M7 staged signing is a separate, manual, read-only workflow. This release
+    # contract runs as part of the existing PR source gate (not a replacement).
+    from release_qualify import require_release_workflow_contract
+    require_release_workflow_contract(contents.get('vlc-release.yml', ''))
     source = contents[WORKFLOW_FILE]
     if not re.search(r'(?m)^name:\s*VLC Android PR qualification\s*$', source):
         raise ContractFailure('required workflow name drift')

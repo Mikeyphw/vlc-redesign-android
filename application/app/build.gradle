@@ -43,34 +43,33 @@ android {
 
     signingConfigs {
         release {
-            /*
-            To set this properties, create file gradle.properties with these 3 props.
-            e.g.
-            keyStoreFile=/home/<username>/.android/debug.keystore
-            storealias=androiddebugkey
-            storepwd=android
-             */
-            // VLC Redesign: the release key is given at release time only, never kept in the repository:
-            // RD_KEYSTORE_FILE (path), RD_KEYSTORE_PASSWORD, RD_KEY_ALIAS, RD_KEY_PASSWORD (defaults to the store's).
-            // Build: gradle :application:app:assembleSignedRelease (docs/android-release.md)
+            // M7: signedRelease cannot silently use upstream Gradle properties, a
+            // debug certificate, or an incompletely supplied production keystore.
+            // Non-signing Gradle tasks remain configurable without release secrets.
+            def rdSignedReleaseRequested = gradle.startParameter.taskNames.any {
+                it.toLowerCase(java.util.Locale.ROOT).contains('signedrelease')
+            }
             def rdStore = System.getenv('RD_KEYSTORE_FILE')
-            if (rdStore != null && !rdStore.isEmpty()) {
-                storeFile file(rdStore)
-                storePassword = System.getenv('RD_KEYSTORE_PASSWORD')
-                keyAlias = System.getenv('RD_KEY_ALIAS')
-                keyPassword = System.getenv('RD_KEY_PASSWORD') ?: System.getenv('RD_KEYSTORE_PASSWORD')
+            def rdStorePassword = System.getenv('RD_KEYSTORE_PASSWORD')
+            def rdAlias = System.getenv('RD_KEY_ALIAS')
+            def rdKeyPassword = System.getenv('RD_KEY_PASSWORD')
+            def rdSigningComplete = [rdStore, rdStorePassword, rdAlias, rdKeyPassword].every {
+                it != null && !it.trim().isEmpty()
+            }
+            if (rdSignedReleaseRequested && !rdSigningComplete) {
+                throw new GradleException('signedRelease requires explicit RD_KEYSTORE_FILE, RD_KEYSTORE_PASSWORD, RD_KEY_ALIAS and RD_KEY_PASSWORD')
+            }
+            if (rdSigningComplete) {
+                def rdKeyFile = file(rdStore)
+                if (!rdKeyFile.isFile() || !rdKeyFile.canRead()) {
+                    throw new GradleException('signedRelease keystore missing or unreadable')
+                }
+                storeFile = rdKeyFile
+                storePassword = rdStorePassword
+                keyAlias = rdAlias
+                keyPassword = rdKeyPassword
                 enableV1Signing = true
                 enableV2Signing = true
-            } else if (project.hasProperty('keyStoreFile')) {
-                storeFile file(project.findProperty('keyStoreFile'))
-                keyAlias project.findProperty('storealias')
-                if (System.getenv('PASSWORD_KEYSTORE') != null && !System.getenv('PASSWORD_KEYSTORE').isEmpty()) {
-                    storePassword = System.getenv('PASSWORD_KEYSTORE')
-                    keyPassword = System.getenv('PASSWORD_KEYSTORE')
-                } else {
-                    storePassword project.findProperty('storepwd')
-                    keyPassword project.findProperty('storepwd')
-                }
             }
         }
     }
@@ -128,15 +127,11 @@ android {
 
     splits {
         abi {
-            def isReleaseBuild = false
-            gradle.startParameter.taskNames.find {
-                // Enable split for release builds in different build flavors
-                // (assemblePaidRelease, assembleFreeRelease, etc.).
-                if (it.toLowerCase() ==~ /assemble.*Release/.toLowerCase()) {
-                    isReleaseBuild = true
-                    return true // break
-                }
-                return false // continue
+            // M7: Gradle taskNames can be fully qualified (:application:app:...)
+            // and ==~ previously compared the whole path, disabling ABI splits.
+            def isReleaseBuild = gradle.startParameter.taskNames.any { task ->
+                def name = task.tokenize(':').last().toLowerCase(java.util.Locale.ROOT)
+                name.startsWith('assemble') && name.endsWith('release')
             }
             enable = isReleaseBuild
             reset()
