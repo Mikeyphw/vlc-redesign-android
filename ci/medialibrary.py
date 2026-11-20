@@ -19,6 +19,7 @@ import sys
 import tempfile
 import urllib.request
 import urllib.error
+import time
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -220,13 +221,29 @@ def fetch_official(url: str, *, timeout: int = 90) -> bytes:
     if not url.startswith('https://repo.maven.apache.org/maven2/' + GROUP_PATH + '/0.13.24/'):
         refuse('untrusted or unexpected Maven Central URL')
     req = urllib.request.Request(url, headers={'User-Agent': 'vlc-patched-medialibrary-source-gate/1'})
-    try:
-        response = urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.HTTPError as exc:
-        # Preserve an exact URL for diagnostics; 404 of AAR/POM is different
-        # from Maven Central's routinely absent optional strong sidecars.
-        raise urllib.error.HTTPError(url, exc.code, f'{exc.reason} url={url}',
-                                     exc.headers, exc.fp) from exc
+    # Maven Central can rate-limit a single official AAR/POM request.
+    # Retry ONLY HTTP 429: no mirror, checksum relaxation, skip, or cache bypass.
+    # Five bounded attempts, four backoffs (110 seconds without Retry-After).
+    retry_delays = (5, 15, 30, 60)
+    for attempt in range(len(retry_delays) + 1):
+        try:
+            response = urllib.request.urlopen(req, timeout=timeout)
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or attempt == len(retry_delays):
+                # A real 404 on the AAR/POM remains fatal. The caller alone
+                # decides whether optional checksum sidecars may be absent.
+                raise urllib.error.HTTPError(url, exc.code, f'{exc.reason} url={url}',
+                                             exc.headers, exc.fp) from exc
+            delay = retry_delays[attempt]
+            retry_after = exc.headers.get('Retry-After') if exc.headers is not None else None
+            # Accept bounded delta-seconds only. Ignore date/garbled headers.
+            if isinstance(retry_after, str) and re.fullmatch(r'[0-9]{1,4}', retry_after.strip()):
+                delay = max(delay, min(int(retry_after.strip()), 90))
+            print(f'VLC_MAVEN_429_RETRY next={attempt + 2}/5 seconds={delay} url={url}',
+                  file=sys.stderr, flush=True)
+            exc.close()
+            time.sleep(delay)
     with response as result:
         if result.geturl() != url:
             refuse('Maven Central redirected to another source')
