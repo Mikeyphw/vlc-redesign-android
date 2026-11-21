@@ -1,0 +1,155 @@
+name: VLC staged signed release qualification
+
+# Production signing is never reachable through pull_request or workflow_run.
+# This workflow stages verified signed artifacts; publication requires separate approval.
+on:
+  workflow_dispatch:
+    inputs:
+      source_ci_run_id:
+        description: Successful VLC PR qualification workflow_dispatch run on this exact main HEAD
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vlc-staged-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-source:
+    name: Verify main commit and independent CI run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      ci_attempt: ${{ steps.verify.outputs.ci_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Read-only source, run and exact-attempt CI verification
+        id: verify
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+        run: |
+          python3 -B ci/release_qualify.py source \
+            --head "$GITHUB_SHA" --ref "$GITHUB_REF" \
+            --run-id "$SOURCE_CI_RUN_ID"
+
+  release-staging:
+    name: Stage four signed APKs and provenance (approval required)
+    needs: verify-source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: vlc-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Requalify after the environment approval; main may have advanced.
+      - name: Requalify exact accepted main and hosted CI after approval
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+        run: |
+          python3 -B ci/release_qualify.py source \
+            --head "$GITHUB_SHA" --ref "$GITHUB_REF" \
+            --run-id "$SOURCE_CI_RUN_ID"
+      # The read-only workflow_dispatch CI must have run on precisely this merge HEAD.
+      # Upload retention is 2 days; missing or stale artifact is a hard failure.
+      - uses: actions/download-artifact@v4
+        with:
+          name: patched-medialibrary-maven
+          run-id: ${{ inputs.source_ci_run_id }}
+          github-token: ${{ github.token }}
+          path: ci/_maven/repository
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mla-*
+          merge-multiple: false
+          run-id: ${{ inputs.source_ci_run_id }}
+          github-token: ${{ github.token }}
+          path: ci/_cache/medialibrary
+      - name: Verify source-bound four ABI receipts and patched AAR
+        run: |
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            python3 -B ci/medialibrary.py verify-abi --abi "$abi" || exit 1
+          done
+          python3 -B ci/medialibrary.py verify-maven
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '12266719'
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Install approved Android SDK/NDK on hosted runner
+        run: |
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;21.4.7075529' || exit 1
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+      - name: Reconstruct and verify pinned LibVLCJNI Gradle source
+        run: |
+          python3 -B ci/prepare_android_gradle.py prepare || exit 1
+          python3 -B ci/prepare_android_gradle.py verify
+      - name: Build four signedRelease APK splits with environment-only key
+        shell: bash
+        env:
+          RD_RELEASE_KEYSTORE_B64: ${{ secrets.RD_RELEASE_KEYSTORE_B64 }}
+          RD_KEYSTORE_PASSWORD: ${{ secrets.RD_KEYSTORE_PASSWORD }}
+          RD_KEY_ALIAS: ${{ secrets.RD_KEY_ALIAS }}
+          RD_KEY_PASSWORD: ${{ secrets.RD_KEY_PASSWORD }}
+          RD_RELEASE_CERT_SHA256: ${{ vars.RD_RELEASE_CERT_SHA256 }}
+          RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
+        run: |
+          python3 -B ci/release_qualify.py signing-env || exit 1
+          umask 077
+          mkdir -p "$RUNNER_TEMP/vlc-m7-keystore" || exit 1
+          export RD_KEYSTORE_FILE="$RUNNER_TEMP/vlc-m7-keystore/release.jks"
+          trap 'rm -f -- "$RD_KEYSTORE_FILE"' EXIT
+          printf '%s' "$RD_RELEASE_KEYSTORE_B64" | base64 --decode > "$RD_KEYSTORE_FILE" || exit 1
+          test -s "$RD_KEYSTORE_FILE" || exit 1
+          gradle --no-daemon :application:app:assembleSignedRelease
+      - name: Generate resolved runtime dependency inventory
+        shell: bash
+        env:
+          RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
+        run: |
+          gradle --no-daemon :application:app:dependencies \
+            --configuration signedReleaseRuntimeClasspath > "$RUNNER_TEMP/vlc-m7-dependencies.txt" || exit 1
+          test -s "$RUNNER_TEMP/vlc-m7-dependencies.txt"
+      - name: Check signed APKs, signer, ID, version, ABIs and create SPDX/provenance
+        env:
+          RD_RELEASE_CERT_SHA256: ${{ vars.RD_RELEASE_CERT_SHA256 }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          SOURCE_CI_ATTEMPT: ${{ needs.verify-source.outputs.ci_attempt }}
+        run: |
+          python3 -B ci/release_qualify.py apks \
+            --head "$GITHUB_SHA" --ref "$GITHUB_REF" \
+            --run-id "$SOURCE_CI_RUN_ID" \
+            --ci-attempt "$SOURCE_CI_ATTEMPT" \
+            --dependencies "$RUNNER_TEMP/vlc-m7-dependencies.txt" \
+            --apk-dir application/app/build/outputs/apk/signedRelease \
+            --cert "$RD_RELEASE_CERT_SHA256" \
+            --out-dir "$RUNNER_TEMP/vlc-m7-staging"
+      - name: Stage qualified artifacts for separate manual release approval
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlc-signed-staging-${{ github.sha }}
+          path: |
+            application/app/build/outputs/apk/signedRelease/*.apk
+            ${{ runner.temp }}/vlc-m7-staging/*
+          if-no-files-found: error
+          retention-days: 14
