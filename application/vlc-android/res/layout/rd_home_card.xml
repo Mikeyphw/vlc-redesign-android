@@ -19,6 +19,7 @@
         <variable name="scaleType" type="android.widget.ImageView.ScaleType" />
         <variable name="progress" type="int" />
         <variable name="isFolder" type="boolean" />
+        <variable name="duration" type="String" />
         <variable name="seen" type="boolean" />
     </data>
 
@@ -40,7 +41,7 @@
             android:layout_height="90dp"
             android:importantForAccessibility="no"
             app:cardBackgroundColor="@color/rd_folder_card"
-            app:cardCornerRadius="6dp"
+            app:cardCornerRadius="8dp"
             app:cardElevation="0dp"
             app:strokeWidth="0dp">
 
@@ -70,6 +71,25 @@
                 android:layout_gravity="bottom|start"
                 android:background="?attr/colorPrimary"
                 android:visibility="@{progress > 0 ? View.VISIBLE : View.GONE, default=gone}" />
+
+            <TextView
+                android:id="@+id/rd_m8_duration_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="6dp"
+                android:minHeight="24dp"
+                android:gravity="center"
+                android:background="@drawable/rd_m8_duration_badge"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:fontFamily="@font/inter"
+                android:text="@{duration}"
+                android:textColor="@android:color/white"
+                android:textSize="11sp"
+                android:importantForAccessibility="no"
+                android:visibility="@{TextUtils.isEmpty(duration) ? View.GONE : View.VISIBLE, default=gone}"
+                tools:text="01:32" />
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
