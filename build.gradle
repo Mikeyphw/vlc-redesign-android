@@ -75,9 +75,13 @@ ext {
     if (!(rdReleaseIdentity in ['standalone', 'original'])) {
         throw new GradleException('RD_RELEASE_IDENTITY must be standalone or original')
     }
-    if (rdReleaseIdentity == 'original' && (gradle.startParameter.taskNames.isEmpty() || !gradle.startParameter.taskNames.every { task ->
-        task in [':application:app:assembleSignedRelease', ':application:app:dependencies']
-    })) {
+    // Gradle StartParameter.taskNames includes task-specific CLI arguments.
+    // Permit only the exact two production command vectors, not arbitrary options
+    // or extra tasks. Global flags such as --no-daemon are parsed separately.
+    def rdRequestedTasks = gradle.startParameter.taskNames
+    if (rdReleaseIdentity == 'original' &&
+            rdRequestedTasks != [':application:app:assembleSignedRelease'] &&
+            rdRequestedTasks != [':application:app:dependencies', '--configuration', 'signedReleaseRuntimeClasspath']) {
         throw new GradleException('Original VideoLAN package ID permitted only for signedRelease assembly or dependency inspection')
     }
     appId = "com.mikeyphw.vlcredesign"

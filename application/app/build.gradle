@@ -46,6 +46,8 @@ android {
             // M7: signedRelease cannot silently use upstream Gradle properties, a
             // debug certificate, or an incompletely supplied production keystore.
             // Non-signing Gradle tasks remain configurable without release secrets.
+            // Deliberately match the configuration argument as well as task names:
+            // signedReleaseRuntimeClasspath also requires the protected keystore.
             def rdSignedReleaseRequested = gradle.startParameter.taskNames.any {
                 it.toLowerCase(java.util.Locale.ROOT).contains('signedrelease')
             }
@@ -130,6 +132,8 @@ android {
             // M7: Gradle taskNames can be fully qualified (:application:app:...)
             // and ==~ previously compared the whole path, disabling ABI splits.
             def isReleaseBuild = gradle.startParameter.taskNames.any { task ->
+                // Task options are present in this list too; only assembly selectors
+                // enable ABI splits. The exact original-ID vectors are checked at root.
                 def name = task.tokenize(':').last().toLowerCase(java.util.Locale.ROOT)
                 name.startsWith('assemble') && name.endsWith('release')
             }
