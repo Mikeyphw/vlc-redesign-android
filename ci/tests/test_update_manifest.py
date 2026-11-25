@@ -65,7 +65,7 @@ class UpdateManifestTests(unittest.TestCase):
                 d=stage/f'vlc-signed-staging-{identity}-{head}';d.mkdir();receipts=self.create(d,identity,signer)
                 files=u.paths(d,identity);files[0].write_bytes(self.build(d,receipts,identity,signer))
                 subprocess.run(['java',str(Path(u.__file__).with_name('UpdateManifestSigner.java')),'sign',*map(str,files),signer],env=env,check=True,capture_output=True,timeout=60)
-                record=dict(schema='vlc-redesign-release-staging.v2',repository=REPOSITORY,branch='main',commit=head,source_ci_workflow_id=PR_WORKFLOW_ID,source_ci_run_id=42,source_ci_attempt=1,release_identity=identity,application_id=pkg,official_vlc_update_compatible=False,release_status='SIGNED_STAGING_ONLY_NOT_PUBLISHED_OR_DEVICE_QUALIFIED',apks=receipts,media_lock_sha256='a'*64)
+                record=dict(schema='vlc-redesign-release-staging.v3',repository=REPOSITORY,branch='main',commit=head,source_ci_workflow_id=PR_WORKFLOW_ID,source_ci_run_id=42,source_ci_attempt=1,release_identity=identity,application_id=pkg,official_vlc_update_compatibility='NOT_QUALIFIED',release_status='SIGNED_STAGING_ONLY_NOT_PUBLISHED_OR_DEVICE_QUALIFIED',apks=receipts,media_lock_sha256='a'*64)
                 (d/f'{identity}-release-provenance.json').write_text(json.dumps(record));(d/f'{identity}-sbom.spdx.json').write_text('{}');(d/f'{identity}-RELEASE_ACCEPTANCE.md').write_text('Fixture only')
                 (d/f'{identity}-SHA256SUMS').write_text(''.join(f'{u.sha256(p)}  {p.name}\n' for p in sorted(d.iterdir())))
             result=qualify(stage,root/'out',head=head,run=42,attempt=1,channel='stable');self.assertEqual(result['apk_count'],8)

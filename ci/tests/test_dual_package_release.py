@@ -1,6 +1,9 @@
-"""M9 two identities, original VLC signer non-continuity and release safety contracts."""
+"""M9 two identities, approved fork signing and release safety contracts."""
 from __future__ import annotations
 import os
+import base64
+import argparse
+import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -54,7 +57,7 @@ class DualPackageReleaseTests(unittest.TestCase):
         self.assertIn('release_identity: [standalone, original]',self.workflow)
         self.assertIn('environment: vlc-release',self.workflow)
         self.assertIn('RD_RELEASE_IDENTITY: ${{ matrix.release_identity }}',self.workflow)
-        self.assertIn('RD_OFFICIAL_VLC_CERT_SHA256:',self.workflow)
+        self.assertNotIn('RD_OFFICIAL_VLC_CERT_SHA256',self.workflow)
         self.assertIn('--release-identity "$RD_RELEASE_IDENTITY"',self.workflow)
         self.assertIn('name: vlc-signed-staging-${{ matrix.release_identity }}-${{ github.sha }}',self.workflow)
         self.assertNotIn('gh release create',self.workflow)
@@ -72,12 +75,48 @@ class DualPackageReleaseTests(unittest.TestCase):
         with self.assertRaises(q.ReleaseRefused):
             q.require_release_workflow_contract(mutated)
 
-    def test_fork_signer_must_differ_from_verified_official(self):
-        release='a'*64
-        q.require_distinct_official_signer(release, 'b'*64)
-        for value in ('', 'bad', 'A'*64, 'a'*64):
-            with self.subTest(value=value[:8] or '<empty>'),self.assertRaises(q.ReleaseRefused):
-                q.require_distinct_official_signer(release,value)
+    def test_both_editions_require_only_approved_fork_signing_inputs(self):
+        inputs = dict(RD_RELEASE_KEYSTORE_B64=base64.b64encode(b'fixture-only'*100).decode(),
+                      RD_KEYSTORE_PASSWORD='fixture-store', RD_KEY_ALIAS='fixture',
+                      RD_KEY_PASSWORD='fixture-key', RD_RELEASE_CERT_SHA256='a'*64)
+        for identity in q.RELEASE_IDENTITIES:
+            env = dict(inputs, RD_RELEASE_IDENTITY=identity)
+            q.check_signing_env(env)
+            # An obsolete optional setting cannot change the new policy.
+            q.check_signing_env(dict(env, RD_OFFICIAL_VLC_CERT_SHA256='a'*64))
+            for name in inputs:
+                with self.subTest(identity=identity, missing=name), self.assertRaises(q.ReleaseRefused):
+                    q.check_signing_env(dict(env, **{name: ''}))
+            for name, value in [('RD_RELEASE_CERT_SHA256', 'bad'), ('RD_RELEASE_KEYSTORE_B64','!')]:
+                with self.subTest(identity=identity, invalid=name), self.assertRaises(q.ReleaseRefused):
+                    q.check_signing_env(dict(env, **{name: value}))
+
+    def test_both_report_routes_without_official_certificate(self):
+        head='b'*40
+        for identity,pkg in q.RELEASE_IDENTITIES.items():
+            with self.subTest(identity=identity), TemporaryDirectory() as tmp:
+                root=Path(tmp)
+                (root/'build-tools/36.0.0').mkdir(parents=True)
+                dependencies=root/'deps.txt'; dependencies.write_text('fixture')
+                apk_dir=root/'apks'; apk_dir.mkdir()
+                out=root/'reports'
+                receipts=[]
+                for abi in q.ABIS:
+                    name=f'VLC-Redesign-{identity}-0.7.6-{abi}.apk'
+                    (apk_dir/name).write_bytes(b'fixture')
+                    receipts.append(dict(apk=name,abi=abi,sha256='b'*64,signer_sha256='a'*64))
+                args=argparse.Namespace(head=head,ref='refs/heads/main',dependencies=str(dependencies),
+                    release_identity=identity,apk_dir=str(apk_dir),cert='a'*64,out_dir=str(out),run_id=42,ci_attempt=1)
+                env=dict(GITHUB_SHA=head,GITHUB_REPOSITORY=q.REPOSITORY,ANDROID_HOME=str(root))
+                with patch.dict(os.environ,env,clear=True), patch.object(q,'parse_dependencies',return_value=[]),                      patch.object(q,'verify_release_apks',return_value=receipts) as verify:
+                    q.write_reports(args)
+                verify.assert_called_once_with(apk_dir,str(root/'build-tools/36.0.0/aapt'),
+                    str(root/'build-tools/36.0.0/apksigner'),'a'*64,identity)
+                data=json.loads((out/'release-provenance.json').read_text())
+                self.assertEqual(data['schema'],'vlc-redesign-release-staging.v3')
+                self.assertEqual(data['application_id'],pkg)
+                self.assertEqual(data['official_vlc_update_compatibility'],'NOT_QUALIFIED')
+                self.assertNotIn('official_vlc_update_compatible',data)
 
     def test_compiled_manifest_identity_and_exported_gate(self):
         pkg=q.RELEASE_IDENTITIES['standalone']; good=manifest_fixture(pkg)
