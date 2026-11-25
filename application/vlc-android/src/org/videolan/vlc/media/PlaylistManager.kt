@@ -15,6 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ObsoleteCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.actor
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -90,6 +92,7 @@ import org.videolan.vlc.gui.browser.BaseBrowserFragment
 import org.videolan.vlc.gui.video.VideoPlayerActivity
 import org.videolan.vlc.util.FileUtils
 import org.videolan.vlc.util.FontCache
+import org.videolan.vlc.util.PlaybackStartFence
 import org.videolan.vlc.util.awaitMedialibraryStarted
 import org.videolan.vlc.util.isSchemeFD
 import org.videolan.vlc.util.isSchemeHttpOrHttps
@@ -109,6 +112,8 @@ private const val PLAYLIST_AUDIO_REPEAT_MODE_KEY = "audio_repeat_mode"
 private const val PLAYLIST_VIDEO_REPEAT_MODE_KEY = "video_repeat_mode"
 
 class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventListener, IMedia.EventListener, CoroutineScope {
+    private val playbackStart = PlaybackStartFence()
+    private val queueLoad = PlaybackStartFence()
     private var endReachedFor: String? = null
     override val coroutineContext = Dispatchers.Main.immediate + SupervisorJob()
 
@@ -251,6 +256,8 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
 
     @MainThread
     suspend fun load(list: List<MediaWrapper>, position: Int, mlUpdate: Boolean = false, avoidErasingStop:Boolean = false) {
+        playbackStart.invalidate()
+        val loadRequest = queueLoad.begin()
         saveMediaList()
         savePosition()
         mediaList.removeEventListener(this@PlaylistManager)
@@ -282,10 +289,15 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
         clearABRepeat()
         player.setRate(1.0f, false)
         playIndex(currentIndex)
+        if (!queueLoad.isCurrent(loadRequest)) return
         service.onPlaylistLoaded()
         if (mlUpdate) {
             service.awaitMedialibraryStarted()
-            mediaList.replaceWith(withContext(Dispatchers.IO) { mediaList.copy.updateWithMLMeta() })
+            if (!queueLoad.isCurrent(loadRequest)) return
+            val snapshot = mediaList.copy
+            val updated = withContext(Dispatchers.IO) { snapshot.updateWithMLMeta() }
+            if (!queueLoad.isCurrent(loadRequest) || mediaList.copy != snapshot) return
+            mediaList.replaceWith(updated)
             getCurrentMedia()?.let { refreshTrackMeta(it) }
             if (BuildConfig.BETA) {
                 Log.d(TAG, "load after ml update with values: ")
@@ -400,6 +412,8 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
     }
 
     fun stop(systemExit: Boolean = false, video: Boolean = false) {
+        playbackStart.invalidate()
+        queueLoad.invalidate()
         clearABRepeat()
         if (stopAfter != -1) Settings.getInstance(AppContextProvider.appContext).putSingle(AUDIO_STOP_AFTER, stopAfter)
         stopAfter = -1
@@ -526,6 +540,7 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
      * media player, which [attach] gives the video player's views; what was playing goes on where it was.
      */
     suspend fun restartForEffects(attach: ((org.videolan.libvlc.MediaPlayer) -> Unit)? = null) {
+        playbackStart.invalidate()
         val playing = hasMedia() && player.isPlaying()
         val time = player.getCurrentTime()
         val paused = !playing
@@ -537,26 +552,28 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
     }
 
     suspend fun playIndex(index: Int, flags: Int = 0, forceResume:Boolean = false, forceRestart:Boolean = false) {
-        // The fonts are scanned when the first text renderer is created, which would otherwise
-        // delay the playback by several seconds on the first run. See [FontCache]
-        // Wait before reading any state, as the queue can change in the meantime
-        FontCache.await(service) {
-            service.showToast(service.getString(R.string.font_cache_building), Toast.LENGTH_LONG)
-        }
-
-        videoBackground = videoBackground || (!player.isVideoPlaying() && player.canSwitchToVideo())
-        if (mediaList.size() == 0) {
+        currentCoroutineContext().ensureActive()
+        val request = playbackStart.begin()
+        if (!hasMedia()) {
             Log.w(TAG, "Warning: empty media list, nothing to play !")
             return
         }
-        currentIndex = if (isValidPosition(index)) {
-            index
-        } else {
-            Log.w(TAG, "Warning: index $index out of bounds")
-            0
-        }
+        val targetIndex = if (isValidPosition(index)) index else 0
+        val mw = mediaList.getMedia(targetIndex) ?: return
+        fun stillCurrent() = playbackStart.isCurrent(request) && mediaList.getMedia(targetIndex) === mw
 
-        val mw = mediaList.getMedia(index) ?: return
+        // Audio-only and benchmark starts must not wait for subtitle renderer warmup.
+        // A stream can contain video, so preserve the bounded warmup for unknown/stream types.
+        if (!isBenchmark && mw.type != MediaWrapper.TYPE_AUDIO &&
+                (player.hasRenderer || !mw.hasFlag(MediaWrapper.MEDIA_FORCE_AUDIO))) {
+            FontCache.await(service) {
+                if (stillCurrent()) service.showToast(service.getString(R.string.font_cache_building), Toast.LENGTH_LONG)
+            }
+        }
+        currentCoroutineContext().ensureActive()
+        if (!stillCurrent()) return
+        videoBackground = videoBackground || (!player.isVideoPlaying() && player.canSwitchToVideo())
+        currentIndex = targetIndex
         val mediaFromMl = medialibrary.getMedia(mw.uri)
         if (mediaFromMl != null)
             mw.time = mediaFromMl.time
@@ -574,10 +591,12 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
         parsed = false
         player.switchToVideo = false
         if (mw.uri.scheme == "content") withContext(Dispatchers.IO) { MediaUtils.retrieveMediaTitle(mw) }
+        if (!stillCurrent()) return
 
         if (mw.type != MediaWrapper.TYPE_VIDEO || isVideoPlaying || player.hasRenderer
                 || mw.hasFlag(MediaWrapper.MEDIA_FORCE_AUDIO)) {
             var uri = withContext(Dispatchers.IO) { FileUtils.getUri(mw.uri) }
+            if (!stillCurrent()) return
             if (uri == null) {
                 skipMedia()
                 return
@@ -596,7 +615,7 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
                 // If we explicitly restart or NEVER resume is set, ensure any leftover savedTime is cleared
                 if (start == 0L && (forceRestart || videoResumeStatus == ResumeStatus.NEVER)) savedTime = 0L
                 if (!forceResume && videoResumeStatus == ResumeStatus.ASK && start > 0 && isAppStarted()) {
-                    waitForConfirmation.postValue(WaitConfirmation(mw.title, index, flags))
+                    waitForConfirmation.postValue(WaitConfirmation(mw.title, targetIndex, flags))
                     return
                 }
             } else {
@@ -605,7 +624,7 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
                 // If we explicitly restart or NEVER resume is set, ensure any leftover savedTime is cleared
                 if (start == 0L && (forceRestart || audioResumeStatus == ResumeStatus.NEVER)) savedTime = 0L
                 if (!forceResume && audioResumeStatus == ResumeStatus.ASK && start > 0 && isAppStarted()) {
-                    val confirmation = WaitConfirmation(mw.title, index, flags)
+                    val confirmation = WaitConfirmation(mw.title, targetIndex, flags)
                     waitForConfirmationAudio.postValue(confirmation)
                     return
                 }
@@ -618,46 +637,55 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
             }
             //todo restore position as well when we move to VLC 4.0
             val media = mediaFactory.getFromUri(VLCInstance.getInstance(service), uri)
-            //fixme workaround to prevent the issue described in https://code.videolan.org/videolan/vlc-android/-/issues/2106
-            if (shouldDisableCookieForwarding) {
-                shouldDisableCookieForwarding = false
-                media.addOption(":no-http-forward-cookies")
-            }
-            settings.getString(HTTP_USER_AGENT, null)?.let {
-                 media.addOption(":http-user-agent=$it")
-            }
-            val dav1dThreadNumber = settings.getString(DAV1D_THREAD_NUMBER, "") ?: ""
-            if (dav1dThreadNumber.isNotEmpty() && dav1dThreadNumber.toInt() >= 1) {
-                media.addOption(":dav1d-thread-frames=$dav1dThreadNumber")
-            }
-            //todo in VLC 4.0, this should be done by using libvlc_media_player_set_time instead of start-time
-            media.addOption(":start-time=${start/1000L}")
-            // VLC Redesign, casting: no ":no-sout-chromecast-video" on every media: "Audio only" is libvlc's option
-            // (VLCOptions), and the media's own options do not reach the Chromecast output of libvlc 3
-            openedNoVideo = (flags or mw.flags) and MediaWrapper.MEDIA_VIDEO == 0
-            // VLC Redesign, Live TV: the options of the channel (its user agent, its referrer)
-            org.videolan.vlc.livetv.TvPlayback.mediaOptions(mw.uri.toString()).forEach { media.addOption(it) }
-            // (Start paused: a channel switch of Live TV or the same media opened again starts playing)
-            VLCOptions.rdReopening = reopening || org.videolan.vlc.livetv.TvPlayback.isTvUrl(mw.uri.toString())
-            VLCOptions.setMediaOptions(media, ctx, flags or mw.flags, PlaybackService.hasRenderer())
-            VLCOptions.rdReopening = false
-            applySubtitleCharset(media, uri)
-            /* keeping only video during benchmark */
-            if (isBenchmark) {
-                media.addOption(":no-audio")
-                media.addOption(":no-spu")
-                if (isHardware) {
-                    media.addOption(":codec=mediacodec_ndk,mediacodec_jni,none")
-                    isHardware = false
+            var handedOff = false
+            try {
+                //fixme workaround to prevent the issue described in https://code.videolan.org/videolan/vlc-android/-/issues/2106
+                if (shouldDisableCookieForwarding) {
+                    shouldDisableCookieForwarding = false
+                    media.addOption(":no-http-forward-cookies")
                 }
+                settings.getString(HTTP_USER_AGENT, null)?.let {
+                     media.addOption(":http-user-agent=$it")
+                }
+                val dav1dThreadNumber = settings.getString(DAV1D_THREAD_NUMBER, "") ?: ""
+                if (dav1dThreadNumber.isNotEmpty() && dav1dThreadNumber.toInt() >= 1) {
+                    media.addOption(":dav1d-thread-frames=$dav1dThreadNumber")
+                }
+                //todo in VLC 4.0, this should be done by using libvlc_media_player_set_time instead of start-time
+                media.addOption(":start-time=${start/1000L}")
+                // VLC Redesign, casting: no ":no-sout-chromecast-video" on every media: "Audio only" is libvlc's option
+                // (VLCOptions), and the media's own options do not reach the Chromecast output of libvlc 3
+                openedNoVideo = (flags or mw.flags) and MediaWrapper.MEDIA_VIDEO == 0
+                // VLC Redesign, Live TV: the options of the channel (its user agent, its referrer)
+                org.videolan.vlc.livetv.TvPlayback.mediaOptions(mw.uri.toString()).forEach { media.addOption(it) }
+                // (Start paused: a channel switch of Live TV or the same media opened again starts playing)
+                VLCOptions.rdReopening = reopening || org.videolan.vlc.livetv.TvPlayback.isTvUrl(mw.uri.toString())
+                try {
+                    VLCOptions.setMediaOptions(media, ctx, flags or mw.flags, PlaybackService.hasRenderer())
+                } finally { VLCOptions.rdReopening = false }
+                applySubtitleCharset(media, uri)
+                if (!stillCurrent()) return
+                /* keeping only video during benchmark */
+                if (isBenchmark) {
+                    media.addOption(":no-audio")
+                    media.addOption(":no-spu")
+                    if (isHardware) {
+                        media.addOption(":codec=mediacodec_ndk,mediacodec_jni,none")
+                        isHardware = false
+                    }
+                }
+                media.setEventListener(this@PlaylistManager)
+                if (!player.startPlayback(media, mediaplayerEventListener, start, ::stillCurrent)) return
+                if (!stillCurrent()) return
+                handedOff = true
+                player.setSlaves(media, mw, ::stillCurrent)
+                if (browserAudioActive) player.setVolume(0)
+                newMedia = true
+                determinePrevAndNextIndices()
+                if (stillCurrent()) service.onNewPlayback()
+            } finally {
+                if (!handedOff) media.release()
             }
-            media.setEventListener(this@PlaylistManager)
-            player.startPlayback(media, mediaplayerEventListener, start)
-            player.setSlaves(media, mw)
-            if (browserAudioActive) player.setVolume(0)
-            newMedia = true
-            determinePrevAndNextIndices()
-            service.onNewPlayback()
         } else { //Start VideoPlayer for first video, it will trigger playIndex when ready.
             if (player.isPlaying()) player.stop()
             VideoPlayerActivity.startOpened(ctx, mw.uri, currentIndex)
@@ -696,6 +724,8 @@ class PlaylistManager(val service: PlaybackService) : MediaWrapperList.EventList
     }
 
     fun onServiceDestroyed() {
+        playbackStart.invalidate()
+        queueLoad.invalidate()
         player.release()
     }
 

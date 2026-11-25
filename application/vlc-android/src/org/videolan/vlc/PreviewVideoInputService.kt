@@ -13,6 +13,9 @@ import android.view.Surface
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.FactoryManager
@@ -25,6 +28,7 @@ import org.videolan.tools.getContextWithLocale
 import org.videolan.vlc.media.MediaPlayerEventListener
 import org.videolan.vlc.media.PlayerController
 import org.videolan.vlc.util.FontCache
+import org.videolan.vlc.util.PlaybackStartFence
 import org.videolan.vlc.util.random
 import java.io.IOException
 
@@ -50,44 +54,68 @@ class PreviewVideoInputService : TvInputService(), CoroutineScope by MainScope()
     private inner class PreviewSession(context: Context
     ) : Session(context), MediaPlayerEventListener {
 
-        val player by lazy(LazyThreadSafetyMode.NONE) { PlayerController(applicationContext) }
+        private val playerDelegate = lazy(LazyThreadSafetyMode.NONE) { PlayerController(applicationContext) }
+        val player by playerDelegate
+        private val tuneFence = PlaybackStartFence()
+        private var tuneJob: Job? = null
+        @Volatile private var released = false
+        private var tunedUri: Uri? = null
+        private var needsRetune = false
 
         override fun onRelease() {
-            player.release()
+            released = true
+            tunedUri = null
+            tuneFence.invalidate()
+            tuneJob?.cancel()
+            surfaceReady?.cancel()
+            if (playerDelegate.isInitialized()) player.release()
         }
 
         override fun onTune(uri: Uri): Boolean {
+            if (released) return false
+            val id = uri.lastPathSegment?.toLongOrNull() ?: return false
+            tunedUri = uri
+            needsRetune = false
+            val request = tuneFence.begin()
+            tuneJob?.cancel()
             notifyVideoUnavailable(VIDEO_UNAVAILABLE_REASON_TUNING)
-            val id = uri.lastPathSegment?.toLong() ?: return false
-            launch {
+            tuneJob = launch {
+                fun current() = !released && tuneFence.isCurrent(request)
                 val mw = getFromMl { getMedia(id) }
+                if (!current()) return@launch
                 if (mw == null) {
                     Log.w(TAG, "Could not find video $id")
                     notifyVideoUnavailable(TvInputManager.VIDEO_UNAVAILABLE_REASON_UNKNOWN)
                     return@launch
                 }
                 try {
-                    // No preview until the fonts have been scanned, see [FontCache]
+                    // Bounded shared warmup; canceled previews cannot open a native player later.
                     FontCache.await(this@PreviewVideoInputService)
-                    val media = factory.getFromUri(VLCInstance.getInstance(this@PreviewVideoInputService), mw.uri)
-                    val start = if (mw.length <= 0L) 0L else mw.length.random()
-                    media.addOption(":start-time=${start/1000L}")
                     awaitSurface()
-                    player.getVout()?.apply {
-                        setVideoSurface(surface, null)
-                        attachViews(null)
-                        setWindowSize(width, height)
-                    }
-                    player.setVideoAspectRatio(null)
-                    player.setVideoScale(0f)
-                    player.startPlayback(media, this@PreviewSession, start)
-                    notifyVideoAvailable()
+                    currentCoroutineContext().ensureActive()
+                    if (!current()) return@launch
+                    val targetSurface = surface ?: return@launch
+                    if (!targetSurface.isValid) return@launch
+                    val media = factory.getFromUri(VLCInstance.getInstance(this@PreviewVideoInputService), mw.uri)
+                    try {
+                        val start = if (mw.length <= 0L) 0L else mw.length.random()
+                        media.addOption(":start-time=${start/1000L}")
+                        player.getVout()?.apply {
+                            setVideoSurface(targetSurface, null)
+                            attachViews(null)
+                            setWindowSize(width, height)
+                        }
+                        player.setVideoAspectRatio(null)
+                        player.setVideoScale(0f)
+                        val started = player.startPlayback(media, this@PreviewSession, start) { current() && surface === targetSurface }
+                        if (started && current()) notifyVideoAvailable()
+                    } finally { media.release() }
                 } catch (e: IOException) {
                     Log.e(TAG, "Could not prepare media player", e)
-                    notifyVideoUnavailable(TvInputManager.VIDEO_UNAVAILABLE_REASON_UNKNOWN)
+                    if (current()) notifyVideoUnavailable(TvInputManager.VIDEO_UNAVAILABLE_REASON_UNKNOWN)
                 } catch (e: IllegalStateException) {
                     Log.e(TAG, "Could not prepare media player", e)
-                    notifyVideoUnavailable(TvInputManager.VIDEO_UNAVAILABLE_REASON_UNKNOWN)
+                    if (current()) notifyVideoUnavailable(TvInputManager.VIDEO_UNAVAILABLE_REASON_UNKNOWN)
                 }
             }
             return true
@@ -95,12 +123,25 @@ class PreviewVideoInputService : TvInputService(), CoroutineScope by MainScope()
 
         private var width = 0
         private var height = 0
-        private lateinit var surface: Surface
+        @Volatile private var surface: Surface? = null
         private var surfaceReady : CompletableDeferred<Unit>? = null
         override fun onSetSurface(surface: Surface?): Boolean {
-            if (surface == null) return false
+            if (released) return false
+            val previousSurface = this.surface
             this.surface = surface
-            surfaceReady?.complete(Unit)
+            if (surface == null) {
+                if (previousSurface != null) {
+                    tuneFence.invalidate()
+                    tuneJob?.cancel()
+                    needsRetune = tunedUri != null
+                    if (playerDelegate.isInitialized()) player.stop()
+                }
+                return true
+            }
+            if (needsRetune || (previousSurface != null && previousSurface !== surface)) {
+                if (playerDelegate.isInitialized()) player.stop()
+                tunedUri?.let { onTune(it) }
+            } else surfaceReady?.complete(Unit)
             return true
         }
 
@@ -115,15 +156,17 @@ class PreviewVideoInputService : TvInputService(), CoroutineScope by MainScope()
 
         override suspend fun onEvent(event: MediaPlayer.Event) {
             when(event.type) {
-                MediaPlayer.Event.EndReached -> player.release()
+                MediaPlayer.Event.EndReached -> if (!released) player.stop()
             }
         }
 
         private suspend fun awaitSurface() {
-            if (!::surface.isInitialized) {
-                surfaceReady = CompletableDeferred(Unit)
-                surfaceReady?.await()
-                surfaceReady = null
+            if (surface == null) {
+                val ready = CompletableDeferred<Unit>()
+                surfaceReady = ready
+                try { ready.await() } finally {
+                    if (surfaceReady === ready) surfaceReady = null
+                }
             }
         }
     }
