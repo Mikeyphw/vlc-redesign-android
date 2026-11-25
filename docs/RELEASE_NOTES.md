@@ -3,4 +3,4 @@
 - Independently signed standalone and original-ID editions.
 - Fork-owned update channels with signed update metadata, resumable downloads and Android installation approval.
 
-The original-ID edition cannot replace official VideoLAN VLC in place: its signing key differs.
+The original-ID edition is not an official VideoLAN update. Android rejects incompatible signing keys; compatibility with official VLC is not qualified.

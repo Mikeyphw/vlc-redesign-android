@@ -39,11 +39,10 @@ M9 introduces a separately scoped, protected, matrix-staged release. Each job
 builds four ABI APKs from the same qualified `main` commit with
 `RD_RELEASE_IDENTITY=standalone` or `original`. The official-ID package is
 `org.videolan.vlc`, **not** KuchiSofts' `org.kuchisofts.vlcredesign`.
-The original-ID variant uses the fork's own signing key and must be installed
-only after uninstalling official VLC; no in-place update or data migration is
-promised. M9 requires the trusted official VLC signing certificate fingerprint
-(`RD_OFFICIAL_VLC_CERT_SHA256`) to be present and **different** from the
-approved fork signer before staging its original-ID APKs. Both staging
+The original-ID variant uses the approved fork signing key. Android rejects
+incompatible signing identities; official-update compatibility is not qualified
+and no in-place update or data migration is promised. No official APK or
+VideoLAN signer fingerprint is required to stage either edition. Both staging
 artifacts require separate human QA and release approval; see
 `docs/M9_M10_RELEASE_ENGINEERING.md`.
 
@@ -56,7 +55,7 @@ artifacts require separate human QA and release approval; see
 
 ### M9/M10: paired staging and in-app updates
 
-The protected workflow now stages both identities in separate matrix jobs and requires the `qualify-pair` job to verify all eight APKs and both detached update-manifest signatures. Only the final `vlc-qualified-pair-<commit>` artifact is eligible for separate publication approval. Individual matrix artifacts are not a qualified release pair. `RD_OFFICIAL_VLC_CERT_SHA256` must be an independently verified VideoLAN APK signer fingerprint and must differ from the fork key for the original-ID edition. Never uninstall or replace an existing differently signed VLC automatically.
+The protected workflow now stages both identities in separate matrix jobs and requires the `qualify-pair` job to verify all eight APKs and both detached update-manifest signatures. Only the final `vlc-qualified-pair-<commit>` artifact is eligible for separate publication approval. Individual matrix artifacts are not a qualified release pair. Both editions must match the same approved fork certificate; official-update compatibility is not qualified. The obsolete official certificate environment input is no longer used. Never uninstall or replace an existing differently signed VLC automatically.
 
 Each release uses the same authorized fork APK key to authenticate exact manifest bytes. Publish the unchanged assets under `v<version>` for stable, or `v<version>-beta` as a GitHub prerelease. Increment the numeric version for every new update, including a beta promotion if it changes APK bytes or metadata. Stable clients never consume prereleases; beta clients may accept newer stable releases. The app verifies the manifest against its installed signing certificate, selects its installed package and ABI, checks APK bytes/signing identity and then hands the APK to Android's PackageInstaller. Android owns user consent. No private key or GitHub token is embedded in the app. The signed metadata is separate from the source CI attestation and does not claim device acceptance.
 

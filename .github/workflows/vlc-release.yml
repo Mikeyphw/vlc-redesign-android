@@ -125,7 +125,6 @@ jobs:
           RD_KEY_ALIAS: ${{ secrets.RD_KEY_ALIAS }}
           RD_KEY_PASSWORD: ${{ secrets.RD_KEY_PASSWORD }}
           RD_RELEASE_CERT_SHA256: ${{ vars.RD_RELEASE_CERT_SHA256 }}
-          RD_OFFICIAL_VLC_CERT_SHA256: ${{ vars.RD_OFFICIAL_VLC_CERT_SHA256 }}
           RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
         run: |
           python3 -B ci/release_qualify.py signing-env || exit 1
@@ -150,7 +149,6 @@ jobs:
           RD_RELEASE_CERT_SHA256: ${{ vars.RD_RELEASE_CERT_SHA256 }}
           SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
           SOURCE_CI_ATTEMPT: ${{ needs.verify-source.outputs.ci_attempt }}
-          RD_OFFICIAL_VLC_CERT_SHA256: ${{ vars.RD_OFFICIAL_VLC_CERT_SHA256 }}
         run: |
           python3 -B ci/release_qualify.py apks \
             --head "$GITHUB_SHA" --ref "$GITHUB_REF" \

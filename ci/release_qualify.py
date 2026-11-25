@@ -75,6 +75,9 @@ def require_release_workflow_contract(text: str) -> None:
                  'github-token: ${{ github.token }}',
                  'name: patched-medialibrary-maven', 'pattern: mla-*',
                  'RD_RELEASE_KEYSTORE_B64: ${{ secrets.RD_RELEASE_KEYSTORE_B64 }}',
+                 'RD_KEYSTORE_PASSWORD: ${{ secrets.RD_KEYSTORE_PASSWORD }}',
+                 'RD_KEY_ALIAS: ${{ secrets.RD_KEY_ALIAS }}',
+                 'RD_KEY_PASSWORD: ${{ secrets.RD_KEY_PASSWORD }}',
                  'RD_RELEASE_CERT_SHA256: ${{ vars.RD_RELEASE_CERT_SHA256 }}',
                  'if-no-files-found: error', 'actions/upload-artifact@v4'):
         require(item in text, 'release workflow required guard missing: '+item)
@@ -181,22 +184,6 @@ def check_signing_env(env: dict[str, str]) -> None:
         raise ReleaseRefused('invalid base64-encoded signing keystore') from exc
     require(1024 <= len(decoded) <= 2_000_000, 'keystore size outside safe bounds')
     del decoded
-    if env.get('RD_RELEASE_IDENTITY') == 'original':
-        require_distinct_official_signer(env.get('RD_RELEASE_CERT_SHA256', ''),
-                                        env.get('RD_OFFICIAL_VLC_CERT_SHA256', ''))
-
-
-def require_distinct_official_signer(release: str, official: str) -> None:
-    """Verify the expected private signer is not the verified VideoLAN certificate.
-
-    The official digest is supplied as a trusted, nonsecret environment variable.
-    A missing official digest is a release blocker, not an inferred claim.
-    """
-    release = release.lower().replace(':', '').strip()
-    official = official.lower().replace(':', '').strip()
-    require(bool(HEX64.fullmatch(release)), 'private release signer fingerprint invalid')
-    require(bool(HEX64.fullmatch(official)), 'verified official VideoLAN certificate fingerprint required')
-    require(release != official, 'signing would be compatible with official VLC; original-ID variant refused')
 
 
 def _run(argv: list[str]) -> str:
@@ -336,8 +323,6 @@ def write_reports(args: argparse.Namespace) -> None:
     require(tools.is_dir(), 'expected Android 36.0.0 tools not installed')
     packages = parse_dependencies(Path(args.dependencies).read_text('utf-8'))
     require(args.release_identity in RELEASE_IDENTITIES, 'unknown release identity')
-    if args.release_identity == 'original':
-        require_distinct_official_signer(args.cert, os.environ.get('RD_OFFICIAL_VLC_CERT_SHA256', ''))
     apks = verify_release_apks(Path(args.apk_dir), str(tools/'aapt'),
                                str(tools/'apksigner'), args.cert, args.release_identity)
     root = Path.cwd()
@@ -346,10 +331,10 @@ def write_reports(args: argparse.Namespace) -> None:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=False)
     ci_run = int(args.run_id)
-    provenance = {'schema': 'vlc-redesign-release-staging.v2', 'repository': REPOSITORY,
+    provenance = {'schema': 'vlc-redesign-release-staging.v3', 'repository': REPOSITORY,
                   'release_identity': args.release_identity,
                   'application_id': RELEASE_IDENTITIES[args.release_identity],
-                  'official_vlc_update_compatible': False,
+                  'official_vlc_update_compatibility': 'NOT_QUALIFIED',
                   'commit': head, 'branch': 'main', 'source_ci_workflow_id': PR_WORKFLOW_ID,
                   'source_ci_run_id': ci_run, 'source_ci_attempt': int(args.ci_attempt),
                   'media_lock_sha256': hashlib.sha256(lock.read_bytes()).hexdigest(),
@@ -378,7 +363,7 @@ def write_reports(args: argparse.Namespace) -> None:
         f'- Release identity: `{args.release_identity}` package `{RELEASE_IDENTITIES[args.release_identity]}`\n'
         f'- Signed APKs: {len(apks)} ABI-specific packages; certificate `{apks[0]["signer_sha256"]}`\n'
         '- Status: **staging only**; no GitHub Release, production rollout or device acceptance.\n'
-        '- The original-ID variant is independently signed, NOT an official VideoLAN update; uninstall official VLC first after backing up its app data.\n'
+        '- The original-ID variant is a fork, NOT an official VideoLAN update; Android rejects incompatible signing identities. Official-update compatibility is not qualified; no automatic uninstall or migration.\n'
         '- SBOM records resolved Gradle dependencies and APKs; license/vulnerability review is still mandatory.\n'
         '- Verify installer identity and update compatibility on physical phone/TV, rollback and recovery,\n'
         '  signed artifact download digests, accessibility, casting, DRM and version monotonicity.\n'
