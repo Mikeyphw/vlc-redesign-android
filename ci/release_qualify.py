@@ -91,6 +91,45 @@ def require_release_workflow_contract(text: str) -> None:
     protected, public = after.split('      - name: Check signed APKs', 1)
     require(all(after.count('ci/update_manifest.py '+op)==1 for op in ('sign','verify','stage')), 'manifest qualification steps missing or duplicated')
     require('ci/update_manifest.py sign' in protected and 'ci/update_manifest.py verify' in public and 'ci/update_manifest.py stage' in public, 'manifest signing boundary drift')
+    # Both Gradle calls configure signedRelease. The inventory must execute in
+    # the very same shell as keystore creation, before its EXIT trap runs.
+    signing_name = '      - name: Build four independently signed APK splits for selected package identity'
+    require(protected.count(signing_name) == 1, 'protected signing step missing or duplicated')
+    prefix, signing = protected.split(signing_name, 1)
+    require(not re.search(r'(?m)^      - ', signing), 'signing or dependency inventory escaped its protected step')
+    require('secrets.' not in prefix, 'signing secrets must be step-scoped')
+    require('\n        shell: bash\n' in signing and signing.count('\n        run: |\n') == 1,
+            'protected signing shell contract changed')
+    env, body = signing.split('\n        run: |\n', 1)
+    for name in ('RD_RELEASE_KEYSTORE_B64', 'RD_KEYSTORE_PASSWORD', 'RD_KEY_ALIAS', 'RD_KEY_PASSWORD'):
+        require(env.count('          '+name+': ${{ secrets.'+name+' }}') == 1,
+                'missing protected signing input: '+name)
+    require('          RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository' in env,
+            'protected Gradle Maven repository missing')
+    ordered = ('python3 -B ci/release_qualify.py signing-env || exit 1',
+               'umask 077', 'export RD_KEYSTORE_FILE=',
+               'trap \'rm -f -- "$RD_KEYSTORE_FILE"\' EXIT',
+               'base64 --decode > "$RD_KEYSTORE_FILE" || exit 1',
+               'test -s "$RD_KEYSTORE_FILE" || exit 1',
+               'gradle --no-daemon :application:app:assembleSignedRelease || exit 1',
+               'ci/update_manifest.py sign ',
+               'gradle --no-daemon :application:app:dependencies',
+               '--configuration signedReleaseRuntimeClasspath > "$RUNNER_TEMP/vlc-m7-dependencies.txt" || exit 1',
+               'test -s "$RUNNER_TEMP/vlc-m7-dependencies.txt"')
+    cursor = 0
+    for command in ordered:
+        pos = body.find(command, cursor)
+        require(pos >= cursor, 'protected signing/inventory ordering or guard missing: '+command)
+        cursor = pos + len(command)
+    require(bool(re.search(r'(?m)^          python3 -B ci/update_manifest\.py sign .* \|\| exit 1$', body)),
+            'manifest signing failure must stop the inventory')
+    require(text.count(':application:app:dependencies') == 1 and
+            text.count('signedReleaseRuntimeClasspath') == 1,
+            'release inventory missing or duplicated')
+    require('--dependencies "$RUNNER_TEMP/vlc-m7-dependencies.txt"' in public,
+            'dependency inventory must feed public APK/SBOM qualification')
+    require('GITHUB_ENV' not in signing and 'GITHUB_OUTPUT' not in signing,
+            'protected signing credentials must never cross step boundaries')
     require(text.count('  qualify-pair:') == 1 and 'needs: [verify-source, release-staging]' in text,
             'both release identities must pass before the aggregate staging job')
     pair = text.split('  qualify-pair:', 1)[1]

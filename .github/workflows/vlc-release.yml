@@ -135,12 +135,9 @@ jobs:
           printf '%s' "$RD_RELEASE_KEYSTORE_B64" | base64 --decode > "$RD_KEYSTORE_FILE" || exit 1
           test -s "$RD_KEYSTORE_FILE" || exit 1
           gradle --no-daemon :application:app:assembleSignedRelease || exit 1
-          python3 -B ci/update_manifest.py sign --apk-dir application/app/build/outputs/apk/signedRelease --out-dir "$RUNNER_TEMP/vlc-update-manifest" --identity "$RD_RELEASE_IDENTITY" --head "$GITHUB_SHA" --cert "$RD_RELEASE_CERT_SHA256" --channel "$RD_UPDATE_CHANNEL" --notes docs/RELEASE_NOTES.md
-      - name: Generate resolved runtime dependency inventory
-        shell: bash
-        env:
-          RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
-        run: |
+          python3 -B ci/update_manifest.py sign --apk-dir application/app/build/outputs/apk/signedRelease --out-dir "$RUNNER_TEMP/vlc-update-manifest" --identity "$RD_RELEASE_IDENTITY" --head "$GITHUB_SHA" --cert "$RD_RELEASE_CERT_SHA256" --channel "$RD_UPDATE_CHANNEL" --notes docs/RELEASE_NOTES.md || exit 1
+          # Gradle configures signedRelease for dependency resolution too.
+          # Keep this invocation in the same protected shell and EXIT cleanup scope.
           gradle --no-daemon :application:app:dependencies \
             --configuration signedReleaseRuntimeClasspath > "$RUNNER_TEMP/vlc-m7-dependencies.txt" || exit 1
           test -s "$RUNNER_TEMP/vlc-m7-dependencies.txt"
