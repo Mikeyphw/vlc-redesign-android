@@ -11,6 +11,8 @@ import androidx.lifecycle.MutableLiveData
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.actor
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.videolan.BuildConfig
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.RendererItem
@@ -39,7 +41,7 @@ class PlayerController(val context: Context) : IVLCVout.Callback, MediaPlayer.Ev
     val speed by lazy(LazyThreadSafetyMode.NONE) { MutableLiveData<Float>().apply { value = 1.0F } }
     private val slaveRepository by lazy { SlaveRepository.getInstance(context) }
 
-    var mediaplayer = newMediaPlayer()
+    @Volatile var mediaplayer = newMediaPlayer()
         private set
     var switchToVideo = false
     var seekable = false
@@ -78,35 +80,53 @@ class PlayerController(val context: Context) : IVLCVout.Callback, MediaPlayer.Ev
     }
 
     private var mediaplayerEventListener: MediaPlayerEventListener? = null
-    internal suspend fun startPlayback(media: IMedia, listener: MediaPlayerEventListener, time: Long) {
-        mediaplayerEventListener = listener
-        resetPlaybackState(time, media.duration)
-        mediaplayer.setEventListener(null)
-        withContext(Dispatchers.IO) {
-            if (!mediaplayer.isReleased) {
-                mediaplayer.media = media.apply { if (hasRenderer) parse() }
-                // (the previous media stopped with the media set: the device takes this one from its start)
-                if (pendingRenderer) {
-                    mediaplayer.setRenderer(renderer)
-                    pendingRenderer = false
+    private val startMutex = Mutex()
+
+    internal suspend fun startPlayback(media: IMedia, listener: MediaPlayerEventListener, time: Long,
+                                       stillCurrent: () -> Boolean): Boolean = startMutex.withLock {
+        val target = mediaplayer
+        fun current() = stillCurrent() && mediaplayer === target && !target.isReleased
+        if (!current() || !target.retain()) return@withLock false
+        var listenerDetached = false
+        try {
+            resetPlaybackState(time, media.duration)
+            target.setEventListener(null)
+            listenerDetached = true
+            withContext(Dispatchers.IO) {
+                if (current()) {
+                    if (hasRenderer) media.parse()
+                    if (current()) {
+                        target.media = media
+                        if (pendingRenderer && current()) {
+                            target.setRenderer(renderer)
+                            pendingRenderer = false
+                        }
+                    }
                 }
             }
-        }
-        mediaplayer.setEventListener(this@PlayerController)
-        if (!mediaplayer.isReleased) {
+            if (!current()) return@withLock false
             if (Settings.getInstance(context).getBoolean(KEY_EQUALIZER_ENABLED, false)) withContext(Dispatchers.IO) {
                 val repository = EqualizerRepository.getInstance(context)
-                mediaplayer.setEqualizer(repository.getCurrentEqualizer(context).getEqualizer())
-            } else {
-                mediaplayer.setEqualizer(null)
-            }
-            // VLC Redesign: Settings > Subtitles > Show filename when a video starts (the desktop's video-title-show),
-            // for its time (video-title-timeout, 5 s) at its place (video-title-position, at the top as the desktop)
+                val equalizer = repository.getCurrentEqualizer(context).getEqualizer()
+                if (current()) target.setEqualizer(equalizer)
+            } else target.setEqualizer(null)
+            currentCoroutineContext().ensureActive()
+            if (!current()) return@withLock false
             if (settings.getBoolean("rd_video_title", false))
-                mediaplayer.setVideoTitleDisplay(titlePosition(settings.getString("rd_video_title_position", "4")),
+                target.setVideoTitleDisplay(titlePosition(settings.getString("rd_video_title_position", "4")),
                         settings.getInt("rd_video_title_timeout", 5).coerceIn(1, 10) * 1000)
-            else mediaplayer.setVideoTitleDisplay(MediaPlayer.Position.Disable, 0)
-            mediaplayer.play()
+            else target.setVideoTitleDisplay(MediaPlayer.Position.Disable, 0)
+            mediaplayerEventListener = listener
+            target.setEventListener(this@PlayerController)
+            listenerDetached = false
+            target.play()
+            true
+        } finally {
+            // Owner release/restart may overlap IO. The retained native reference survives that work.
+            // Do not reattach a listener to a retired target.
+            if (listenerDetached && mediaplayer === target && !target.isReleased && current())
+                target.setEventListener(this@PlayerController)
+            AppScope.launch(Dispatchers.IO) { target.release() }
         }
     }
 
@@ -278,15 +298,20 @@ class PlayerController(val context: Context) : IVLCVout.Callback, MediaPlayer.Ev
         setPlaybackStopped()
     }
 
-    fun setSlaves(media: IMedia, mw: MediaWrapper) = launch {
-        if (mediaplayer.isReleased) return@launch
-        rdAudioSlave = false
+    fun setSlaves(media: IMedia, mw: MediaWrapper, stillCurrent: () -> Boolean) = launch(start = CoroutineStart.UNDISPATCHED) {
+        val target = mediaplayer
+        fun current() = stillCurrent() && target === mediaplayer && !target.isReleased
         val slaves = mw.slaves
-        slaves?.let { it.forEach { slave -> media.addSlave(slave) } }
-        media.release()
-        slaveRepository.getSlaves(mw.location).forEach { slave ->
-            if (!slaves.contains(slave)) {
-                mediaplayer.addSlave(slave.type, slave.uri.toUri(), false)
+        try {
+            if (!current()) return@launch
+            rdAudioSlave = false
+            slaves?.let { it.forEach { slave -> media.addSlave(slave) } }
+        } finally { media.release() }
+        val saved = slaveRepository.getSlaves(mw.location)
+        if (!current()) return@launch
+        saved.forEach { slave ->
+            if (slaves?.contains(slave) != true) {
+                target.addSlave(slave.type, slave.uri.toUri(), false)
                 if (slave.type == IMedia.Slave.Type.Audio) rdAudioSlave = true
             }
         }
