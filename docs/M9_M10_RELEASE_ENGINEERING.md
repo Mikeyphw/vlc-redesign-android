@@ -34,3 +34,7 @@ The updater lives in `org.videolan.vlc.rd.updater`; existing upstream integratio
 ## Native validation portability (R1)
 
 The Gradle retry policy tests execute only mock commands. Their executable shebangs use the active Python interpreter, not Linux-only `/usr/bin/env` or `/bin/sh`; Termux fixtures use internal storage. The failed R0 transaction is retained as evidence, not replayed. R1 is a new exact-base overlay; all policy assertions remain required.
+
+### M9-F03 — exact Gradle command admission
+
+Gradle exposes task-specific arguments in `startParameter.taskNames`. Original-ID configuration accepts only `:application:app:assembleSignedRelease` or `:application:app:dependencies --configuration signedReleaseRuntimeClasspath` as exact vectors. Bare dependency inspection, extra tasks and other configurations are refused. M9-F02 keeps the signing inputs live through inventory. The required Android hosted CI job exercises both identities against the real Gradle project with an ephemeral test keystore, tests dry-run assembly and negative commands, and removes the fixture. No production signing inputs are used by PR CI. Real production signing and pair acceptance remain separately gated.

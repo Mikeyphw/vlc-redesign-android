@@ -127,6 +127,7 @@ def require_workflow_contract(contents: dict[str, str]) -> None:
                  'if-no-files-found: error', "gradle-version: '9.6.0'",
                  'RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository',
                  'bash ci/gradle_dependency_retry.sh test', 'bash ci/gradle_dependency_retry.sh assemble',
+                 'run: bash ci/test_release_invocations.sh',
                  'docker pull "$VLC_IMAGE"', 'sha256:'):
         must_have(source, code, 'source-built patched Maven workflow')
     # setup-android@v3 defaults to `tools platform-tools`. Google removed

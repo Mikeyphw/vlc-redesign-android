@@ -313,6 +313,11 @@ jobs:
           set -euo pipefail
           python3 -B ci/medialibrary.py source
           python3 -B ci/prepare_android_gradle.py prepare
+      - name: Exercise real Gradle release invocation policy with disposable test key
+        shell: bash
+        env:
+          RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
+        run: bash ci/test_release_invocations.sh
       - name: Derive APK cache key from all non-CI tracked build inputs
         id: apk-key
         shell: bash
