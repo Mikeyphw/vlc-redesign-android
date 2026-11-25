@@ -68,13 +68,26 @@ allprojects {
 ext {
     // VLC Redesign's own: it installs beside VideoLAN's VLC (org.videolan.vlc)
     // M7: separate fork update/signing identity; KuchiSofts app remains installed independently.
+    // M9: two independent signed release identities; original is NOT a VideoLAN update.
+    // An unrecognized identity or an attempt to compile the original ID outside
+    // the protected signedRelease task is always refused.
+    rdReleaseIdentity = (System.getenv('RD_RELEASE_IDENTITY') ?: 'standalone').trim()
+    if (!(rdReleaseIdentity in ['standalone', 'original'])) {
+        throw new GradleException('RD_RELEASE_IDENTITY must be standalone or original')
+    }
+    if (rdReleaseIdentity == 'original' && (gradle.startParameter.taskNames.isEmpty() || !gradle.startParameter.taskNames.every { task ->
+        task in [':application:app:assembleSignedRelease', ':application:app:dependencies']
+    })) {
+        throw new GradleException('Original VideoLAN package ID permitted only for signedRelease assembly or dependency inspection')
+    }
     appId = "com.mikeyphw.vlcredesign"
+    if (rdReleaseIdentity == 'original') appId = "org.videolan.vlc"
     // VLC Redesign: the app's own version (About, release notes); the libvlc base stays upstream's 3.7.2.
     // versionCode from the redesign's version (from 0.5.5): 3100000 + 10 * (major * 10000 + minor * 100 + patch),
     // so 0.5.5 = 3105050. It only grows with the version, whatever upstream's base (its own scheme put the redesign's
     // release counter in one digit of upstream's 3.7.2 = 30702xx: 0.5.0 = 3070250 ... 0.5.4 = 3070290, the last).
     // The last digit stays the ABI's (added per APK, below), and every code is above 0.5.4's.
-    redesignVersionName = '0.7.5'
+    redesignVersionName = '0.7.6'
     versionCode = redesignVersionName.tokenize('.').with { v -> 3100000 + 10 * (v[0].toInteger() * 10000 + v[1].toInteger() * 100 + v[2].toInteger()) }
     vlcMajorVersion = project.hasProperty('forceVlc4') && project.getProperty('forceVlc4') ? 4 : 3
     versionName = vlcMajorVersion == 3 ? redesignVersionName : '4.0.0-preview - ' + versionCode

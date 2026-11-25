@@ -8,16 +8,13 @@ package org.videolan.vlc.gui.helpers
 import android.content.Context
 import android.view.View
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
-import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.videolan.tools.Settings
 import org.videolan.vlc.BuildConfig
 import org.videolan.vlc.R
-import org.videolan.vlc.util.RdUpdateCheck
+import org.videolan.vlc.rd.updater.UpdateActivity
 import org.videolan.vlc.util.openLinkIfPossible
 import java.net.URLEncoder
 import java.util.Locale
@@ -25,7 +22,7 @@ import java.util.Locale
 object RdAbout {
     const val REPOSITORY = "https://github.com/KuchiSofts/vlc-redesign"
     /** the source of this app (GPL): the fork of VLC for Android, not VideoLAN's repository */
-    const val ANDROID_SOURCE = "https://github.com/KuchiSofts/vlc-redesign-android"
+    const val ANDROID_SOURCE = "https://github.com/Mikeyphw/vlc-redesign-android"
     private const val REPORT_FORM = "$REPOSITORY/issues/new?template=bug_report.yml"
     private const val IDEA_FORM = "$REPOSITORY/discussions/new?category=ideas"
     /** the bug form's choice for this app (.github/ISSUE_TEMPLATE/bug_report.yml) */
@@ -56,43 +53,9 @@ object RdAbout {
 
     private fun fillUpdate(activity: FragmentActivity, v: View) {
         val button = v.findViewById<MaterialButton>(R.id.rd_update_button) ?: return
-        val state = v.findViewById<TextView>(R.id.rd_update_state) ?: return
-        var found: RdUpdateCheck.Release? = null
-        // (the button keeps the focus while it checks: switched off, a TV's remote lost its place)
-        var checking = false
-        fun show(text: String, failed: Boolean) {
-            state.text = text
-            state.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
-            state.setTextColor(ContextCompat.getColor(activity, if (failed) R.color.rd_accent_red_main else R.color.rd_fg_2))
-        }
-        button.setOnClickListener {
-            found?.let {
-                activity.openLinkIfPossible(it.apkUrl)
-                return@setOnClickListener
-            }
-            if (checking) return@setOnClickListener
-            checking = true
-            show(activity.getString(R.string.rd_update_checking), false)
-            activity.lifecycleScope.launch {
-                val result = RdUpdateCheck.checkNow(activity)
-                checking = false
-                if (!v.isAttachedToWindow) return@launch
-                when (result) {
-                    is RdUpdateCheck.Result.Available -> {
-                        found = result.release
-                        show(activity.getString(R.string.rd_update_available, result.release.version), false)
-                        state.setTextColor(button.currentTextColor)
-                        button.setText(R.string.download)
-                    }
-                    RdUpdateCheck.Result.UpToDate -> show(activity.getString(R.string.rd_update_latest), false)
-                    RdUpdateCheck.Result.Offline -> show(activity.getString(R.string.rd_update_offline), true)
-                    is RdUpdateCheck.Result.Unexpected -> show(activity.getString(R.string.rd_update_unexpected, result.status.toString()), true)
-                    is RdUpdateCheck.Result.RateLimited -> show(result.resetAt?.let {
-                        activity.getString(R.string.rd_update_rate_limited_at, android.text.format.DateFormat.getTimeFormat(activity).format(java.util.Date(it)))
-                    } ?: activity.getString(R.string.rd_update_rate_limited), true)
-                }
-            }
-        }
+        v.findViewById<TextView>(R.id.rd_update_state)?.visibility = View.GONE
+        button.setText(R.string.rd_m10_title)
+        button.setOnClickListener { UpdateActivity.open(activity) }
     }
 
     /**

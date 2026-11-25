@@ -9,6 +9,12 @@ on:
         description: Successful VLC PR qualification workflow_dispatch run on this exact main HEAD
         type: string
         required: true
+      update_channel:
+        description: Channel for separately approved release
+        type: choice
+        options: [stable, beta]
+        default: stable
+        required: true
 
 permissions:
   contents: read
@@ -48,6 +54,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: vlc-release
+    strategy:
+      fail-fast: false
+      matrix:
+        release_identity: [standalone, original]
+    env:
+      RD_RELEASE_IDENTITY: ${{ matrix.release_identity }}
+      RD_UPDATE_CHANNEL: ${{ inputs.update_channel }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,7 +117,7 @@ jobs:
         run: |
           python3 -B ci/prepare_android_gradle.py prepare || exit 1
           python3 -B ci/prepare_android_gradle.py verify
-      - name: Build four signedRelease APK splits with environment-only key
+      - name: Build four independently signed APK splits for selected package identity
         shell: bash
         env:
           RD_RELEASE_KEYSTORE_B64: ${{ secrets.RD_RELEASE_KEYSTORE_B64 }}
@@ -112,6 +125,7 @@ jobs:
           RD_KEY_ALIAS: ${{ secrets.RD_KEY_ALIAS }}
           RD_KEY_PASSWORD: ${{ secrets.RD_KEY_PASSWORD }}
           RD_RELEASE_CERT_SHA256: ${{ vars.RD_RELEASE_CERT_SHA256 }}
+          RD_OFFICIAL_VLC_CERT_SHA256: ${{ vars.RD_OFFICIAL_VLC_CERT_SHA256 }}
           RD_MAVEN: ${{ github.workspace }}/ci/_maven/repository
         run: |
           python3 -B ci/release_qualify.py signing-env || exit 1
@@ -121,7 +135,8 @@ jobs:
           trap 'rm -f -- "$RD_KEYSTORE_FILE"' EXIT
           printf '%s' "$RD_RELEASE_KEYSTORE_B64" | base64 --decode > "$RD_KEYSTORE_FILE" || exit 1
           test -s "$RD_KEYSTORE_FILE" || exit 1
-          gradle --no-daemon :application:app:assembleSignedRelease
+          gradle --no-daemon :application:app:assembleSignedRelease || exit 1
+          python3 -B ci/update_manifest.py sign --apk-dir application/app/build/outputs/apk/signedRelease --out-dir "$RUNNER_TEMP/vlc-update-manifest" --identity "$RD_RELEASE_IDENTITY" --head "$GITHUB_SHA" --cert "$RD_RELEASE_CERT_SHA256" --channel "$RD_UPDATE_CHANNEL" --notes docs/RELEASE_NOTES.md
       - name: Generate resolved runtime dependency inventory
         shell: bash
         env:
@@ -130,26 +145,71 @@ jobs:
           gradle --no-daemon :application:app:dependencies \
             --configuration signedReleaseRuntimeClasspath > "$RUNNER_TEMP/vlc-m7-dependencies.txt" || exit 1
           test -s "$RUNNER_TEMP/vlc-m7-dependencies.txt"
-      - name: Check signed APKs, signer, ID, version, ABIs and create SPDX/provenance
+      - name: Check signed APKs, signer, selected package ID, ABIs and provenance
         env:
           RD_RELEASE_CERT_SHA256: ${{ vars.RD_RELEASE_CERT_SHA256 }}
           SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
           SOURCE_CI_ATTEMPT: ${{ needs.verify-source.outputs.ci_attempt }}
+          RD_OFFICIAL_VLC_CERT_SHA256: ${{ vars.RD_OFFICIAL_VLC_CERT_SHA256 }}
         run: |
           python3 -B ci/release_qualify.py apks \
             --head "$GITHUB_SHA" --ref "$GITHUB_REF" \
             --run-id "$SOURCE_CI_RUN_ID" \
             --ci-attempt "$SOURCE_CI_ATTEMPT" \
             --dependencies "$RUNNER_TEMP/vlc-m7-dependencies.txt" \
+            --release-identity "$RD_RELEASE_IDENTITY" \
             --apk-dir application/app/build/outputs/apk/signedRelease \
             --cert "$RD_RELEASE_CERT_SHA256" \
-            --out-dir "$RUNNER_TEMP/vlc-m7-staging"
+            --out-dir "$RUNNER_TEMP/vlc-m7-staging" || exit 1
+          python3 -B ci/update_manifest.py verify --apk-dir application/app/build/outputs/apk/signedRelease --out-dir "$RUNNER_TEMP/vlc-update-manifest" --identity "$RD_RELEASE_IDENTITY" --head "$GITHUB_SHA" --cert "$RD_RELEASE_CERT_SHA256" --channel "$RD_UPDATE_CHANNEL" --notes docs/RELEASE_NOTES.md || exit 1
+          python3 -B ci/update_manifest.py stage --apk-dir application/app/build/outputs/apk/signedRelease --out-dir "$RUNNER_TEMP/vlc-update-manifest" --identity "$RD_RELEASE_IDENTITY" --head "$GITHUB_SHA" --cert "$RD_RELEASE_CERT_SHA256" --channel "$RD_UPDATE_CHANNEL" --notes docs/RELEASE_NOTES.md --staging-dir "$RUNNER_TEMP/vlc-m7-staging"
       - name: Stage qualified artifacts for separate manual release approval
         uses: actions/upload-artifact@v4
         with:
-          name: vlc-signed-staging-${{ github.sha }}
+          name: vlc-signed-staging-${{ matrix.release_identity }}-${{ github.sha }}
           path: |
             application/app/build/outputs/apk/signedRelease/*.apk
             ${{ runner.temp }}/vlc-m7-staging/*
+          if-no-files-found: error
+          retention-days: 14
+
+  qualify-pair:
+    name: Qualify both editions as one staged release
+    needs: [verify-source, release-staging]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Recheck exact source and accepted CI before staging the pair
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+        run: |
+          python3 -B ci/release_qualify.py source --head "$GITHUB_SHA" --ref "$GITHUB_REF" --run-id "$SOURCE_CI_RUN_ID"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vlc-signed-staging-*-${{ github.sha }}
+          merge-multiple: false
+          path: ${{ runner.temp }}/vlc-editions
+      - name: Verify exact eight APKs and both signed update manifests
+        env:
+          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          SOURCE_CI_ATTEMPT: ${{ needs.verify-source.outputs.ci_attempt }}
+          RD_UPDATE_CHANNEL: ${{ inputs.update_channel }}
+        run: |
+          python3 -B ci/qualify_update_pair.py --root "$RUNNER_TEMP/vlc-editions" --output "$RUNNER_TEMP/vlc-qualified-pair" --head "$GITHUB_SHA" --run-id "$SOURCE_CI_RUN_ID" --attempt "$SOURCE_CI_ATTEMPT" --channel "$RD_UPDATE_CHANNEL"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vlc-qualified-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/vlc-qualified-pair/*
           if-no-files-found: error
           retention-days: 14

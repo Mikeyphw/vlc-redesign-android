@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rd_m10_title">Atualizações do aplicativo</string>
+    <string name="rd_m10_check">Verificar atualizações</string>
+    <string name="rd_m10_installed">Edição: %1$s · ABI: %2$s · Versão: %3$s</string>
+    <string name="rd_m10_unsupported">Esta versão não é uma edição de lançamento compatível.</string>
+    <string name="rd_m10_wifi">Baixar somente por Wi-Fi</string>
+    <string name="rd_m10_channel">Canal de lançamento</string>
+    <string name="rd_m10_stable">Estável</string>
+    <string name="rd_m10_beta">Beta (inclui lançamentos estáveis)</string>
+    <string name="rd_m10_queued">Aguardando a conexão necessária.</string>
+    <string name="rd_m10_downloading">Baixando lançamento verificado…</string>
+    <string name="rd_m10_paused">Download pausado.</string>
+    <string name="rd_m10_failed">Atualização interrompida ou rejeitada. Tente novamente ou cancele.</string>
+    <string name="rd_m10_ready">Download verificado. Pronto para instalar.</string>
+    <string name="rd_m10_install_failed">A instalação não foi concluída. Tente novamente ou cancele.</string>
+    <string name="rd_m10_installing">Enviando atualização ao instalador do Android…</string>
+    <string name="rd_m10_confirm">O Android requer sua aprovação.</string>
+    <string name="rd_m10_confirm_action">Confirmar instalação</string>
+    <string name="rd_m10_confirmation_lost">Confirmação indisponível. Cancele esta instalação e tente novamente.</string>
+    <string name="rd_m10_installed_ok">Versão %1$s instalada e verificada.</string>
+    <string name="rd_m10_bytes">%1$d de %2$d MiB</string>
+    <string name="rd_m10_progress">Progresso do download da atualização</string>
+    <string name="rd_m10_resume">Retomar ou tentar novamente</string>
+    <string name="rd_m10_pause">Pausar</string>
+    <string name="rd_m10_install">Instalar atualização</string>
+    <string name="rd_m10_permission">Permita instalações por este aplicativo nas configurações do Android e tente novamente.</string>
+    <string name="rd_m10_security_error">Não foi possível verificar os metadados ou a assinatura. Instalação bloqueada.</string>
+    <string name="rd_m10_cancel_question">Cancelar a atualização atual?</string>
+</resources>

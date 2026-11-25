@@ -23,7 +23,7 @@ In GitHub repository Settings → Environments create **`vlc-release`**. Set req
 
 Do **not** place the key or passwords in repository variables, PR secrets, console arguments, logs, receipts or artifact names. Back up the key securely: a different signing key cannot update an existing installed package. Never run a release on an unreviewed fork. No protected environment is configured by this source-only change.
 
-## Execute and independently accept
+## Execute and independently accept (M7 historical single-edition procedure; superseded by paired M9/M10 staging below)
 
 1. Merge an approved M7 PR after all source/Android PR CI jobs pass at its exact HEAD. Revisit direct-upstream KuchiSofts changes using the existing merge simulation; review ancestry, patch conflicts and security updates without automatic merges.
 2. On merged `main`, dispatch **VLC Android PR qualification** (`vlc-pr.yml`) through the GitHub Actions UI or `gh workflow run vlc-pr.yml --ref main`. Confirm **all 7 jobs succeed** at the merged main SHA. Record run ID and attempt. Run within 2 days while source-bound native artifacts remain retained.
@@ -33,9 +33,31 @@ Do **not** place the key or passwords in repository variables, PR secrets, conso
 6. **Device gate (not satisfied by CI):** install each ABI on compatible devices, verify upgrade of a previous `com.mikeyphw.vlcredesign` signed by the same certificate and increasing version code, data retention, fresh install, downgrade rejection, rollback/recovery, PiP, casting, playback, subtitles, background audio, Android TV remote/keyboard, TalkBack, RTL, landscape/foldable and offline media. No migration from the *different* `org.kuchisofts.vlcredesign` app is implied.
 7. After manual release approval and device results are recorded, create a **draft** GitHub Release, upload only matching checksummed APKs, add a changelog separating **VideoLAN upstream**, **KuchiSofts redesign**, and **Mikeyphw custom changes**, then explicitly publish. The staging workflow does not publish or mutate releases.
 
+## M9 dual-identity extension
+
+M9 introduces a separately scoped, protected, matrix-staged release. Each job
+builds four ABI APKs from the same qualified `main` commit with
+`RD_RELEASE_IDENTITY=standalone` or `original`. The official-ID package is
+`org.videolan.vlc`, **not** KuchiSofts' `org.kuchisofts.vlcredesign`.
+The original-ID variant uses the fork's own signing key and must be installed
+only after uninstalling official VLC; no in-place update or data migration is
+promised. M9 requires the trusted official VLC signing certificate fingerprint
+(`RD_OFFICIAL_VLC_CERT_SHA256`) to be present and **different** from the
+approved fork signer before staging its original-ID APKs. Both staging
+artifacts require separate human QA and release approval; see
+`docs/M9_M10_RELEASE_ENGINEERING.md`.
+
 ## Runbook, provenance and limitations
 
 - A failed source gate is never a release pass. A skipped signing job is never a release pass. The M7 PR hosted debug APK validates compile/test continuity, **not** production signature or device readiness.
 - `release-provenance.json` is a source-bound, checked GitHub run/commit/ABI/checksum receipt; it is **not** a cryptographic SLSA attestation or reproducible-build proof. Independent rebuild comparison requires a second trusted builder and comparison of applicable deterministic inputs.
 - The release tool refuses incomplete dependency graphs and certificates/ABIs with inconsistent metadata. Real installation, vulnerability analysis, app data continuity, app-store distribution, device startup/scroll performance and TV automation remain explicit acceptance tasks.
 - Preserve the existing `ci/upstream_merge.py` read-only simulation. Review KuchiSofts main periodically (the scheduled job already runs daily), update genuinely obsolete checks when upstream changes and keep negative/security gates. Never automatically merge, reset, rebase, force-push or overwrite unrelated user work.
+
+### M9/M10: paired staging and in-app updates
+
+The protected workflow now stages both identities in separate matrix jobs and requires the `qualify-pair` job to verify all eight APKs and both detached update-manifest signatures. Only the final `vlc-qualified-pair-<commit>` artifact is eligible for separate publication approval. Individual matrix artifacts are not a qualified release pair. `RD_OFFICIAL_VLC_CERT_SHA256` must be an independently verified VideoLAN APK signer fingerprint and must differ from the fork key for the original-ID edition. Never uninstall or replace an existing differently signed VLC automatically.
+
+Each release uses the same authorized fork APK key to authenticate exact manifest bytes. Publish the unchanged assets under `v<version>` for stable, or `v<version>-beta` as a GitHub prerelease. Increment the numeric version for every new update, including a beta promotion if it changes APK bytes or metadata. Stable clients never consume prereleases; beta clients may accept newer stable releases. The app verifies the manifest against its installed signing certificate, selects its installed package and ABI, checks APK bytes/signing identity and then hands the APK to Android's PackageInstaller. Android owns user consent. No private key or GitHub token is embedded in the app. The signed metadata is separate from the source CI attestation and does not claim device acceptance.
+
+See `docs/M9_M10_RELEASE_ENGINEERING.md` for the update UI, installation and interruption acceptance matrix. No release is published by CI.
