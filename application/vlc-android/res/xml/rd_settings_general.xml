@@ -52,7 +52,8 @@
             app:actionText="@string/rd_m5_reset_action" />
     </PreferenceCategory>
     <PreferenceCategory android:title="@string/rd_sec_startup">
-        <!-- VLC Redesign's releases on GitHub (util/RdUpdateCheck) -->
+        <!-- One fork-owned update screen for both package identities. -->
+        <Preference android:key="rd_fork_updates" android:title="@string/rd_m10_title" />
         <CheckBoxPreference
             android:defaultValue="true"
             android:key="rd_check_updates"

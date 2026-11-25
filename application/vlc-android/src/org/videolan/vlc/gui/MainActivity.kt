@@ -20,7 +20,6 @@
 
 package org.videolan.vlc.gui
 
-import org.videolan.vlc.util.openLinkIfPossible
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.Intent
@@ -88,7 +87,6 @@ import org.videolan.vlc.interfaces.IRefreshable
 import org.videolan.vlc.media.MediaUtils
 import org.videolan.vlc.reloadLibrary
 import org.videolan.vlc.util.AutoUpdate
-import org.videolan.vlc.util.RdUpdateCheck
 import org.videolan.vlc.util.Permissions
 import org.videolan.vlc.util.Util
 import org.videolan.vlc.util.WhatsNewManager
@@ -113,13 +111,6 @@ class MainActivity : ContentActivity(),
         return if (view?.id == android.R.id.content && !useNavigationRail()) {if(overAudioPlayer) findViewById(android.R.id.content) else findViewById(R.id.appbar)} else view
     }
 
-    @SuppressLint("SetTextI18n")
-    /** a link of the update's offer, in the browser when there is one */
-    private fun rdOpenLink(url: String) {
-        // (with no browser, a TV: the address and its QR code)
-        openLinkIfPossible(url)
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Util.checkCpuCompatibility(this)
@@ -141,23 +132,6 @@ class MainActivity : ContentActivity(),
             if (!WidgetMigration.launchIfNeeded(this)) {
                otherCard = if (!Settings.firstRun) WhatsNewManager.launchIfNeeded(this) else { WhatsNewManager.markAsShown(settings); true }
             }
-        }
-
-        // VLC Redesign's own releases on GitHub (RdUpdateCheck): offered, never installed by itself;
-        // not over another card of this start (What's new, a permission), the next start asks
-        if (!otherCard && savedInstanceState == null) lifecycleScope.launch {
-            val release = RdUpdateCheck.check(this@MainActivity) ?: return@launch
-            if (isFinishing) return@launch
-            MaterialAlertDialogBuilder(this@MainActivity)
-                .setTitle(getString(R.string.rd_update_available, release.version))
-                .setMessage(getString(R.string.rd_update_you_have, BuildConfig.RD_VERSION_NAME))
-                // (a TV box without a browser: told, not a crash)
-                .setPositiveButton(R.string.download) { _, _ -> rdOpenLink(release.apkUrl) }
-                .setNeutralButton(R.string.rd_update_whats_new) { _, _ -> rdOpenLink(release.pageUrl) }
-                .setNegativeButton(R.string.skip) { _, _ ->
-                    settings.putSingle(RdUpdateCheck.KEY_SKIPPED, release.version)
-                }
-                .show()
         }
 
         lifecycleScope.launch {

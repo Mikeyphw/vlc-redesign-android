@@ -4,12 +4,12 @@
 The Android app of [VLC Media Player Redesign](https://github.com/KuchiSofts/vlc-redesign): the real VLC engine
 and codecs, under the design's Home, library, player bar, Customize Player, casting, Live TV and tablet layout.
 
-- **This fork:** `Mikeyphw/vlc-redesign-android` uses the independent package
-  `com.mikeyphw.vlcredesign` (debug: `.debug`) and its own release-signing identity.
-  It installs separately from both VideoLAN VLC and KuchiSofts VLC Redesign; it
-  **cannot** silently update or migrate data from `org.kuchisofts.vlcredesign`.
+- **This fork:** `Mikeyphw/vlc-redesign-android` uses its own release-signing identity. The standalone package
+  `com.mikeyphw.vlcredesign` (debug: `.debug`) installs separately from VideoLAN VLC and KuchiSofts VLC Redesign.
+  The optional original-ID edition `org.videolan.vlc` cannot update official VLC with a different signing key.
+  Neither edition silently updates or migrates data from `org.kuchisofts.vlcredesign`.
   This fork has no production download until separately signed and device-qualified.
-  See [M7 release security and acceptance](docs/M7_RELEASE_SECURITY.md).
+  See [M9/M10 release and update procedure](docs/M9_M10_RELEASE_ENGINEERING.md) and [M7 release security](docs/M7_RELEASE_SECURITY.md).
 - **KuchiSofts upstream:** see its [original APK releases](https://github.com/KuchiSofts/vlc-redesign/releases)
   for the distinct upstream app. These are not signed or released by this fork.
 - **Design:** [Juxtopposed](https://www.youtube.com/@juxtopposed) (CC BY 4.0); first implementation by MrDouglax.

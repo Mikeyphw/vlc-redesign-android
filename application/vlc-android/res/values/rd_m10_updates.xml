@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rd_m10_title">Software updates</string>
+    <string name="rd_m10_check">Check for updates</string>
+    <string name="rd_m10_installed">Edition: %1$s · ABI: %2$s · Version: %3$s</string>
+    <string name="rd_m10_unsupported">This build is not a supported release edition.</string>
+    <string name="rd_m10_wifi">Download on Wi-Fi only</string>
+    <string name="rd_m10_channel">Release channel</string>
+    <string name="rd_m10_stable">Stable</string>
+    <string name="rd_m10_beta">Beta (includes stable releases)</string>
+    <string name="rd_m10_queued">Waiting for the required connection.</string>
+    <string name="rd_m10_downloading">Downloading verified release…</string>
+    <string name="rd_m10_paused">Download paused.</string>
+    <string name="rd_m10_failed">Update interrupted or rejected. Retry or cancel.</string>
+    <string name="rd_m10_ready">Download verified. Ready to install.</string>
+    <string name="rd_m10_install_failed">Installation did not complete. Retry or cancel.</string>
+    <string name="rd_m10_installing">Submitting update to the Android installer…</string>
+    <string name="rd_m10_confirm">Android requires your approval.</string>
+    <string name="rd_m10_confirm_action">Confirm installation</string>
+    <string name="rd_m10_confirmation_lost">Confirmation unavailable. Cancel this installation and retry.</string>
+    <string name="rd_m10_installed_ok">Installed version %1$s verified.</string>
+    <string name="rd_m10_bytes">%1$d of %2$d MiB</string>
+    <string name="rd_m10_progress">Update download progress</string>
+    <string name="rd_m10_resume">Resume or retry</string>
+    <string name="rd_m10_pause">Pause</string>
+    <string name="rd_m10_install">Install update</string>
+    <string name="rd_m10_permission">Allow installations from this app in Android settings, then retry.</string>
+    <string name="rd_m10_security_error">Update metadata or signer could not be verified. No installation allowed.</string>
+    <string name="rd_m10_cancel_question">Cancel the current update operation?</string>
+</resources>

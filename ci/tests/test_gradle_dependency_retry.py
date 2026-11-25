@@ -2,14 +2,15 @@
 from pathlib import Path
 import os
 import subprocess
+import sys
+import shutil
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT/'ci/gradle_dependency_retry.sh'
 
-FAKE_GRADLE = '''#!/usr/bin/env python3
-import os,sys
+FAKE_GRADLE = '''import os,sys
 from pathlib import Path
 p=Path(os.environ['VLC_FAKE_CALLS'])
 items=p.read_text().splitlines() if p.is_file() else []
@@ -46,27 +47,52 @@ sys.exit(1)
 
 class GradleRetryTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory()
+        # Android does not provide Linux's /usr/bin/env or /bin/sh. Keep
+        # executable fixtures on internal storage and use the actual running
+        # Python, not a system shebang or a fallback to a real Gradle.
+        self.python = os.path.abspath(sys.executable)
+        prefix = os.environ.get('PREFIX', '')
+        internal_tmp = None
+        if sys.platform == 'android' or self.python.startswith('/data/') or prefix.startswith('/data/'):
+            # Derive the prefix when a launcher has stripped the PREFIX variable.
+            runtime_prefix = Path(prefix) if prefix.startswith('/data/') else Path(self.python).resolve().parent.parent
+            internal_tmp = runtime_prefix / 'tmp'
+            if not internal_tmp.is_dir() or not os.access(internal_tmp, os.W_OK | os.X_OK):
+                internal_tmp = Path.home()
+        self.tmp=tempfile.TemporaryDirectory(dir=internal_tmp)
         self.addCleanup(self.tmp.cleanup)
+        if not os.path.isfile(self.python) or not os.access(self.python, os.X_OK) or any(c.isspace() for c in self.python):
+            self.fail('Fixture requires a directly executable Python interpreter path')
         self.root=Path(self.tmp.name)
         p=self.root/'bin'
         p.mkdir()
         gradle=p/'gradle'
-        gradle.write_text(FAKE_GRADLE)
+        gradle.write_text('#!'+self.python+'\n'+FAKE_GRADLE)
         gradle.chmod(0o755)
         sleep=p/'sleep'
-        sleep.write_text('#!/bin/sh\nexit 0\n')
+        sleep.write_text('#!'+self.python+'\nraise SystemExit(0)\n')
         sleep.chmod(0o755)
         self.env=dict(os.environ, PATH=str(p)+os.pathsep+os.environ.get('PATH',''),
                       VLC_FAKE_CALLS=str(self.root/'calls'), TMPDIR=str(self.root), VLC_FAKE_MODE='success')
 
     def invoke(self,mode='success',task='test'):
         env=dict(self.env,VLC_FAKE_MODE=mode)
+        self.assertEqual(shutil.which('gradle', path=env['PATH']), str(self.root/'bin/gradle'))
+        self.assertEqual(shutil.which('sleep', path=env['PATH']), str(self.root/'bin/sleep'))
         r=subprocess.run(['bash',str(RUNNER),task],env=env,capture_output=True,text=True,timeout=20)
         calls=(self.root/'calls').read_text().splitlines() if (self.root/'calls').exists() else []
         return r,calls
 
-    def test_first_pass_runs_real_gradle_once(self):
+    def test_fixture_executables_use_current_python_without_env_or_shell(self):
+        for name in ('gradle', 'sleep'):
+            path = self.root/'bin'/name
+            self.assertEqual(path.read_text().splitlines()[0], '#!'+self.python)
+            result = subprocess.run([str(path)], env=dict(self.env, PATH=str(self.root/'bin')),
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root/'calls').read_text().splitlines(), [''])
+
+    def test_first_pass_runs_mock_gradle_once(self):
         r,calls=self.invoke()
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual(len(calls),1)

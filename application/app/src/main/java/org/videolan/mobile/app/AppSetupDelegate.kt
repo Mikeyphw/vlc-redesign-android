@@ -108,6 +108,7 @@ class AppSetupDelegate : AppDelegate,
 
 
         AppContextProvider.setLocale(settings.getString(KEY_SET_LOCALE, ""))
+        if (isMainProcess()) org.videolan.vlc.rd.updater.UpdateJobs.initialize(applicationContext)
 
         //Initiate Kotlinx Dispatchers in a thread to prevent ANR
         backgroundInit()

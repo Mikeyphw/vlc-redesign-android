@@ -21,6 +21,7 @@ import urllib.request
 from zipfile import ZipFile
 
 REPOSITORY = 'Mikeyphw/vlc-redesign-android'
+RELEASE_IDENTITIES = {'standalone': 'com.mikeyphw.vlcredesign', 'original': 'org.videolan.vlc'}
 PR_WORKFLOW_ID = 422964106
 REQUIRED_CI_JOBS = frozenset((
     'Native source contracts',
@@ -81,8 +82,18 @@ def require_release_workflow_contract(text: str) -> None:
     before, after = text.split('\n  release-staging:', 1)
     require('secrets.' not in before and 'environment: vlc-release' in after,
             'signing secrets escaped the environment-protected job')
+    require(after.count('      - name: Check signed APKs') == 1, 'release signing boundary missing or ambiguous')
     require('secrets.' not in after.split('      - name: Check signed APKs', 1)[-1],
             'signing secrets must not be used by later artifact/verification steps')
+    protected, public = after.split('      - name: Check signed APKs', 1)
+    require(all(after.count('ci/update_manifest.py '+op)==1 for op in ('sign','verify','stage')), 'manifest qualification steps missing or duplicated')
+    require('ci/update_manifest.py sign' in protected and 'ci/update_manifest.py verify' in public and 'ci/update_manifest.py stage' in public, 'manifest signing boundary drift')
+    require(text.count('  qualify-pair:') == 1 and 'needs: [verify-source, release-staging]' in text,
+            'both release identities must pass before the aggregate staging job')
+    pair = text.split('  qualify-pair:', 1)[1]
+    require(pair.count('ci/qualify_update_pair.py') == 1 and 'pattern: vlc-signed-staging-*-${{ github.sha }}' in pair
+            and 'name: vlc-qualified-pair-${{ github.sha }}' in pair and 'ci/release_qualify.py source' in pair,
+            'paired staging qualification is missing or bypassed')
     require('continue-on-error:' not in text and '|| true' not in text,
             'release qualification bypass is forbidden')
 
@@ -170,6 +181,22 @@ def check_signing_env(env: dict[str, str]) -> None:
         raise ReleaseRefused('invalid base64-encoded signing keystore') from exc
     require(1024 <= len(decoded) <= 2_000_000, 'keystore size outside safe bounds')
     del decoded
+    if env.get('RD_RELEASE_IDENTITY') == 'original':
+        require_distinct_official_signer(env.get('RD_RELEASE_CERT_SHA256', ''),
+                                        env.get('RD_OFFICIAL_VLC_CERT_SHA256', ''))
+
+
+def require_distinct_official_signer(release: str, official: str) -> None:
+    """Verify the expected private signer is not the verified VideoLAN certificate.
+
+    The official digest is supplied as a trusted, nonsecret environment variable.
+    A missing official digest is a release blocker, not an inferred claim.
+    """
+    release = release.lower().replace(':', '').strip()
+    official = official.lower().replace(':', '').strip()
+    require(bool(HEX64.fullmatch(release)), 'private release signer fingerprint invalid')
+    require(bool(HEX64.fullmatch(official)), 'verified official VideoLAN certificate fingerprint required')
+    require(release != official, 'signing would be compatible with official VLC; original-ID variant refused')
 
 
 def _run(argv: list[str]) -> str:
@@ -190,6 +217,37 @@ def parse_badging(text: str) -> dict:
             'target_sdk': int(target.group(1)), 'abis': re.findall(r"'([^']+)'", native.group(1))}
 
 
+def verify_manifest_identity(text: str, package: str) -> None:
+    """Inspect aapt's decoded binary manifest, including identity-bound providers and updater."""
+    require(package in RELEASE_IDENTITIES.values(), 'unknown release package')
+    components = []
+    current = None
+    for line in text.splitlines():
+        element = re.match(r'^\s*E: (\S+)', line)
+        if element:
+            current = (element.group(1), {})
+            components.append(current)
+            continue
+        attribute = re.match(r'^\s*A: android:([A-Za-z]+)(?:\(0x[0-9a-fA-F]+\))?=(.*)$', line)
+        if current and attribute:
+            key, value = attribute.groups()
+            literal = re.match(r'^"([^"]*)"', value)
+            current[1][key] = literal.group(1) if literal else value.strip()
+    authorities = [c.get('authorities') for tag,c in components if tag=='provider']
+    for suffix in ('.tv','.provider','.artwork','.thumbprovider'):
+        require(authorities.count(package+suffix)==1,'compiled provider identity mismatch: '+suffix)
+    require(not any(a and (a.startswith('org.kuchisofts.vlcredesign.') or (package!='org.videolan.vlc' and a.startswith('org.videolan.vlc.'))) for a in authorities),'foreign provider authority')
+    permissions={c.get('name') for tag,c in components if tag=='permission'}
+    for suffix in ('.MEDIA','.permission.READ_EXTENSION_DATA','.permission.BIND_DATA_CONSUMER','.permission.REMOTE_ACCESS_CONTROL'):
+        require(package+suffix in permissions,'compiled permission identity mismatch: '+suffix)
+    require(any(tag=='uses-permission' and c.get('name')=='android.permission.REQUEST_INSTALL_PACKAGES' for tag,c in components),'installer permission absent')
+    prefix='org.videolan.vlc.rd.updater.'
+    for tag,name in (('activity','UpdateActivity'),('activity','UpdateConfirmationActivity'),('service','UpdateJobService'),('receiver','UpdateInstallReceiver')):
+        matches=[c for kind,c in components if kind==tag and c.get('name')==prefix+name]
+        require(len(matches)==1 and matches[0].get('exported') in ('(type 0x12)0x0','false'),'installer component missing or exported: '+name)
+        if tag=='service':require(matches[0].get('permission')=='android.permission.BIND_JOB_SERVICE','unprotected updater job')
+
+
 def parse_signer(text: str) -> str:
     x = re.findall(r'(?mi)^Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f: ]+)\s*$', text)
     require(len(x) == 1, 'APK must have exactly one signing certificate')
@@ -202,7 +260,7 @@ def parse_signer(text: str) -> str:
 
 
 def expected_version_code(name: str, abi: str) -> int:
-    version = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', name)
+    version = re.fullmatch(r'(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)\.(0|[1-9][0-9]?)', name)
     require(bool(version), 'release version is not semantic three-component version')
     major, minor, patch = map(int, version.groups())
     require(major <= 10 and minor < 100 and patch < 100,
@@ -230,7 +288,9 @@ def parse_dependencies(text: str) -> list[dict]:
     return [packages[k] for k in sorted(packages)]
 
 
-def verify_release_apks(root: Path, aapt: str, apksigner: str, expected_cert: str) -> list[dict]:
+def verify_release_apks(root: Path, aapt: str, apksigner: str, expected_cert: str,
+                        release_identity: str = 'standalone') -> list[dict]:
+    require(release_identity in RELEASE_IDENTITIES, 'unknown release identity')
     require(root.is_dir() and not root.is_symlink(), 'missing signedRelease APK directory')
     files = sorted(root.glob('*.apk'))
     require(len(files) == 4 and all(p.is_file() and not p.is_symlink() for p in files),
@@ -241,23 +301,26 @@ def verify_release_apks(root: Path, aapt: str, apksigner: str, expected_cert: st
     found = set()
     receipts = []
     for apk in files:
-        match = re.fullmatch(r'VLC-Android-(\d+\.\d+\.\d+)-(armeabi-v7a|arm64-v8a|x86|x86_64)\.apk',apk.name)
+        match = re.fullmatch(r'VLC-Redesign-'+release_identity+r'-(\d+\.\d+\.\d+)-(armeabi-v7a|arm64-v8a|x86|x86_64)\.apk',apk.name)
         require(bool(match), 'unexpected APK output filename')
         ver, abi = match.groups()
         require(abi not in found, 'duplicate ABI APK')
         found.add(abi)
         metadata = parse_badging(_run([aapt, 'dump', 'badging', str(apk)]))
-        require(metadata['package'] == 'com.mikeyphw.vlcredesign', 'release application ID drift')
+        require(metadata['package'] == RELEASE_IDENTITIES[release_identity], 'release application ID drift for '+release_identity)
         require(metadata['version_name'] == ver, 'APK versionName mismatch')
         require(metadata['version_code'] == expected_version_code(ver, abi), 'non-monotonic or incorrect ABI versionCode')
         require(metadata['min_sdk'] == 21 and metadata['target_sdk'] == 36, 'SDK support drift')
         require(metadata['abis'] == [abi], 'split APK native code does not match filename ABI')
+        verify_manifest_identity(_run([aapt, 'dump', 'xmltree', str(apk), 'AndroidManifest.xml']), metadata['package'])
         signer = parse_signer(_run([apksigner, 'verify', '--min-sdk-version', '21',
                                    '--verbose', '--print-certs', str(apk)]))
         require(signer == expected_cert, 'signing certificate differs from approved fingerprint')
         sha = hashlib.sha256(apk.read_bytes()).hexdigest()
         versions.add(ver)
-        receipts.append({'apk': apk.name, 'sha256': sha, 'abi': abi, 'signer_sha256': signer,
+        receipts.append({'apk': apk.name, 'release_identity': release_identity,
+                         'application_id': RELEASE_IDENTITIES[release_identity],
+                         'sha256': sha, 'abi': abi, 'signer_sha256': signer,
                          'version_name': ver, 'version_code': metadata['version_code'],
                          'min_sdk': metadata['min_sdk'], 'target_sdk': metadata['target_sdk']})
     require(found == set(ABIS) and len(versions) == 1, 'not all release ABIs share one version')
@@ -272,14 +335,21 @@ def write_reports(args: argparse.Namespace) -> None:
     tools = Path(os.environ.get('ANDROID_HOME', ''))/'build-tools/36.0.0'
     require(tools.is_dir(), 'expected Android 36.0.0 tools not installed')
     packages = parse_dependencies(Path(args.dependencies).read_text('utf-8'))
-    apks = verify_release_apks(Path(args.apk_dir), str(tools/'aapt'), str(tools/'apksigner'), args.cert)
+    require(args.release_identity in RELEASE_IDENTITIES, 'unknown release identity')
+    if args.release_identity == 'original':
+        require_distinct_official_signer(args.cert, os.environ.get('RD_OFFICIAL_VLC_CERT_SHA256', ''))
+    apks = verify_release_apks(Path(args.apk_dir), str(tools/'aapt'),
+                               str(tools/'apksigner'), args.cert, args.release_identity)
     root = Path.cwd()
     lock = root/'ci/medialibrary.lock.json'
     require(lock.is_file() and not lock.is_symlink(), 'native source lock missing')
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=False)
     ci_run = int(args.run_id)
-    provenance = {'schema': 'vlc-redesign-release-staging.v1', 'repository': REPOSITORY,
+    provenance = {'schema': 'vlc-redesign-release-staging.v2', 'repository': REPOSITORY,
+                  'release_identity': args.release_identity,
+                  'application_id': RELEASE_IDENTITIES[args.release_identity],
+                  'official_vlc_update_compatible': False,
                   'commit': head, 'branch': 'main', 'source_ci_workflow_id': PR_WORKFLOW_ID,
                   'source_ci_run_id': ci_run, 'source_ci_attempt': int(args.ci_attempt),
                   'media_lock_sha256': hashlib.sha256(lock.read_bytes()).hexdigest(),
@@ -292,7 +362,7 @@ def write_reports(args: argparse.Namespace) -> None:
               'licenseConcluded': 'NOASSERTION', 'licenseInfoInFiles': ['NOASSERTION'],
               'copyrightText': 'NOASSERTION'} for receipt in apks]
     sbom = {'spdxVersion': 'SPDX-2.3', 'dataLicense': 'CC0-1.0', 'SPDXID': 'SPDXRef-DOCUMENT',
-            'name': 'vlc-redesign-android-staged-release-'+head[:12],
+            'name': 'vlc-redesign-'+args.release_identity+'-staged-release-'+head[:12],
             'documentNamespace': f'https://github.com/{REPOSITORY}/commit/{head}/release-sbom/{ci_run}/{hashlib.sha256(json.dumps(apks, sort_keys=True).encode()).hexdigest()[:20]}',
             'creationInfo': {'creators': ['Tool: VLC-M7-release-qualify-1.0'],
                              'created': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')},
@@ -305,8 +375,10 @@ def write_reports(args: argparse.Namespace) -> None:
         '# Staged release — approval required\n\n'
         f'- Source: `{REPOSITORY}` `main` at `{head}`\n'
         f'- Prerequisite read-only CI: run `{ci_run}`, attempt `{args.ci_attempt}`\n'
+        f'- Release identity: `{args.release_identity}` package `{RELEASE_IDENTITIES[args.release_identity]}`\n'
         f'- Signed APKs: {len(apks)} ABI-specific packages; certificate `{apks[0]["signer_sha256"]}`\n'
         '- Status: **staging only**; no GitHub Release, production rollout or device acceptance.\n'
+        '- The original-ID variant is independently signed, NOT an official VideoLAN update; uninstall official VLC first after backing up its app data.\n'
         '- SBOM records resolved Gradle dependencies and APKs; license/vulnerability review is still mandatory.\n'
         '- Verify installer identity and update compatibility on physical phone/TV, rollback and recovery,\n'
         '  signed artifact download digests, accessibility, casting, DRM and version monotonicity.\n'
@@ -317,7 +389,7 @@ def write_reports(args: argparse.Namespace) -> None:
     for receipt in apks:
         manifest.append(receipt['sha256']+'  '+receipt['apk'])
     (out/'SHA256SUMS').write_text('\n'.join(manifest)+'\n')
-    print('VLC_M7_SIGNED_STAGING_VERIFIED head='+head+' apks='+str(len(apks))+
+    print('VLC_M9_SIGNED_STAGING_VERIFIED identity='+args.release_identity+' head='+head+' apks='+str(len(apks))+
           ' dependencies='+str(len(packages))+' certificate_sha256='+apks[0]['signer_sha256'])
 
 
@@ -336,6 +408,7 @@ def main() -> int:
     a.add_argument('--ci-attempt',type=int,required=True)
     a.add_argument('--dependencies',required=True)
     a.add_argument('--apk-dir',required=True)
+    a.add_argument('--release-identity',choices=sorted(RELEASE_IDENTITIES),required=True)
     a.add_argument('--cert',required=True)
     a.add_argument('--out-dir',required=True)
     args=p.parse_args()

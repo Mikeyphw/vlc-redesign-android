@@ -411,6 +411,10 @@ class RdSettingsPage : BasePreferenceFragment(), SharedPreferences.OnSharedPrefe
     override fun onPreferenceTreeClick(preference: Preference): Boolean {
         val key = preference.key ?: return false
         val activity = requireActivity()
+        if (key == "rd_fork_updates") {
+            org.videolan.vlc.rd.updater.UpdateActivity.open(activity)
+            return true
+        }
         if (org.videolan.vlc.gui.livetv.TvSettings.click(this, key)) return true
         if (services?.click(key) == true) return true
         if (languages?.click(key) == true) return true
